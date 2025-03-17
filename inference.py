@@ -13,34 +13,19 @@ import torch
 from PIL import Image
 import torchvision.transforms as transforms
 from model.TransformerModel import TransformerModel
-
-
-def get_latest_checkpoint(checkpoint_dir):
-    """
-    Searches the checkpoint directory for files ending in .pth and returns
-    the checkpoint with the highest epoch number assuming the file format is:
-    "model_epoch_{n}.pth".
-    """
-    checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.pth')]
-    if not checkpoint_files:
-        raise FileNotFoundError(f"No checkpoint files found in directory: {checkpoint_dir}")
-
-    # Extract epoch number from file name assuming format: model_epoch_{n}.pth
-    def extract_epoch(filename):
-        try:
-            epoch_str = filename.split('_')[-1].split('.')[0]
-            return int(epoch_str)
-        except Exception:
-            return -1
-
-    checkpoint_files = sorted(checkpoint_files, key=extract_epoch)
-    latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[-1])
-    return latest_checkpoint
+from tools.utils import get_latest_checkpoint
 
 
 def main(args):
-    # Set device to CUDA if available, otherwise CPU
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # if no gpu available, use cpu. if on macos>=13.0, use mps
+    DEVICE = "cpu"
+
+    if torch.backends.mps.is_built():
+        DEVICE = "mps"
+    elif torch.backends.cuda.is_built():
+        DEVICE = "cuda"
+
+    device = torch.device(DEVICE)
     print(f"Running inference on device: {device}")
 
     # For saving images with Pillow
