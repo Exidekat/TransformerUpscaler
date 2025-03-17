@@ -110,14 +110,14 @@ class TransformerModel(nn.Module):
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x):
+    def forward(self, x, res=(1080, 1920)):
         """
         Forward pass:
           - x: Low resolution image of shape (B, 3, 720, 1280)
           - Returns: Upscaled image of shape (B, 3, 1080, 1920)
         """
         # Compute a global residual: bicubic upscale of the input image.
-        upscaled_input = F.interpolate(x, size=(1080, 1920), mode='bicubic', align_corners=False)
+        upscaled_input = F.interpolate(x, size=res, mode='bicubic', align_corners=False)
 
         # Encoder: extract features using a shallow CNN.
         feat = self.relu(self.conv1(x))
@@ -152,7 +152,7 @@ class TransformerModel(nn.Module):
         residual = self.decoder_conv2(dec)  # Predicted residual image at lower resolution
 
         # Upsample the residual to the final output resolution.
-        residual_up = F.interpolate(residual, size=(1080, 1920), mode='bicubic', align_corners=False)
+        residual_up = F.interpolate(residual, size=res, mode='bicubic', align_corners=False)
 
         # Add the residual to the bicubic-upscaled input.
         out = upscaled_input + residual_up
