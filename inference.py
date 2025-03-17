@@ -1,0 +1,96 @@
+"""
+inference.py
+
+This script loads the latest model checkpoint from the specified directory,
+loads an input image, and performs upscaling using the TransformerModel.
+The input image is first resized to 720×1280 (low resolution) to match the model's input.
+The model produces a Full HD output (1080×1920), which is then saved to the specified output file.
+"""
+
+import os
+import argparse
+import torch
+from PIL import Image
+import torchvision.transforms as transforms
+from model.TransformerModel import TransformerModel
+
+
+def get_latest_checkpoint(checkpoint_dir):
+    """
+    Searches the checkpoint directory for files ending in .pth and returns
+    the checkpoint with the highest epoch number assuming the file format is:
+    "model_epoch_{n}.pth".
+    """
+    checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.pth')]
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoint files found in directory: {checkpoint_dir}")
+
+    # Extract epoch number from file name assuming format: model_epoch_{n}.pth
+    def extract_epoch(filename):
+        try:
+            epoch_str = filename.split('_')[-1].split('.')[0]
+            return int(epoch_str)
+        except Exception:
+            return -1
+
+    checkpoint_files = sorted(checkpoint_files, key=extract_epoch)
+    latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[-1])
+    return latest_checkpoint
+
+
+def main(args):
+    # Set device to CUDA if available, otherwise CPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Running inference on device: {device}")
+
+    # For saving images with Pillow
+    to_pil = transforms.ToPILImage()
+
+    # Load input image and apply low resolution transform (720x1280)
+    image = Image.open(args.image_path).convert('RGB')
+    lr_transform = transforms.Compose([
+        transforms.Resize((720, 1280)),
+        transforms.ToTensor()
+    ])
+    lr_tensor = lr_transform(image)
+
+    # Saving the 720p input image
+    downscaled_image = to_pil(lr_tensor)
+    downscaled_image.save(args.inp)
+    print(f"Downscaled image saved to: {args.inp}")
+
+    lr_tensor = lr_tensor.unsqueeze(0)  # Add batch dimension
+
+    # Instantiate the model and load the latest checkpoint
+    model = TransformerModel().to(device)
+    checkpoint_path = get_latest_checkpoint(args.checkpoint_dir)
+    print(f"Loading checkpoint: {checkpoint_path}")
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    model.eval()
+
+    # Run inference with no gradient tracking
+    with torch.no_grad():
+        output = model(lr_tensor.to(device))
+
+    # Convert model output tensor to PIL image (output shape: (1,3,1080,1920))
+    output = output.squeeze(0).cpu()  # Remove batch dimension
+
+    upscaled_image = to_pil(output)
+
+    # Save the upscaled image to the specified output path
+    upscaled_image.save(args.out)
+    print(f"Upscaled image saved to: {args.out}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Inference script for Transformer upscaler")
+    parser.add_argument("--image_path", type=str, required=True,
+                        help="Path to the input image file")
+    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints",
+                        help="Directory containing model checkpoints")
+    parser.add_argument("--inp", type=str, default="input.png",
+                        help="Output file path for the downscaled input image")
+    parser.add_argument("--out", type=str, default="output.png",
+                        help="Output file path for the upscaled image")
+    args = parser.parse_args()
+    main(args)

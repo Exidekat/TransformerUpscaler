@@ -1,0 +1,5 @@
+# IDE Settings
+.idea/
+
+# Cache
+__pycache__*
