@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 ### Helper functions for window partitioning
 def window_partition(x, window_size):
     """
@@ -35,6 +36,7 @@ def window_partition(x, window_size):
     x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
     windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, -1, window_size * window_size, C)
     return windows
+
 
 def window_reverse(windows, window_size, H, W):
     """
@@ -51,11 +53,13 @@ def window_reverse(windows, window_size, H, W):
     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
     return x
 
+
 ### Relative Window Attention Module
 class WindowAttention(nn.Module):
     """
     Window based multi-head self attention with relative positional bias.
     """
+
     def __init__(self, dim, window_size, num_heads, dropout=0.0):
         super(WindowAttention, self).__init__()
         self.dim = dim
@@ -112,11 +116,13 @@ class WindowAttention(nn.Module):
         x = self.proj_drop(x)
         return x
 
+
 ### Window Transformer Block
 class WindowTransformerBlock(nn.Module):
     """
     Transformer block operating on local windows.
     """
+
     def __init__(self, dim, window_size, num_heads, mlp_ratio=4.0, dropout=0.0):
         super(WindowTransformerBlock, self).__init__()
         self.norm1 = nn.LayerNorm(dim)
@@ -128,6 +134,7 @@ class WindowTransformerBlock(nn.Module):
             nn.Linear(int(dim * mlp_ratio), dim),
             nn.Dropout(dropout)
         )
+
     def forward(self, x):
         # x: (B, num_windows, N, C)
         B, num_windows, N, C = x.shape
@@ -140,17 +147,18 @@ class WindowTransformerBlock(nn.Module):
         x = x.view(B, num_windows, N, C)
         return x
 
+
 ### New Transformer Model
 class TransformerModel(nn.Module):
     def __init__(
-        self,
-        in_channels=3,
-        base_channels=64,
-        num_transformer_blocks=4,
-        num_heads=4,
-        mlp_ratio=4.0,
-        dropout=0.0,
-        window_size=8
+            self,
+            in_channels=3,
+            base_channels=64,
+            num_transformer_blocks=4,
+            num_heads=4,
+            mlp_ratio=4.0,
+            dropout=0.0,
+            window_size=8
     ):
         super(TransformerModel, self).__init__()
         # Encoder: two convolutional layers with ReLU.
@@ -166,7 +174,7 @@ class TransformerModel(nn.Module):
         # Hierarchical Transformer stage: process feature map windows.
         self.blocks = nn.ModuleList([
             WindowTransformerBlock(dim=base_channels, window_size=window_size, num_heads=num_heads,
-                                    mlp_ratio=mlp_ratio, dropout=dropout)
+                                   mlp_ratio=mlp_ratio, dropout=dropout)
             for _ in range(num_transformer_blocks)
         ])
         # Decoder: a simple CNN to predict the residual.
@@ -209,14 +217,15 @@ class TransformerModel(nn.Module):
         """
         # Global residual: bicubic upsample of input.
         upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
-        features = self.encoder(x)                   # (B, base_channels, H, W)
-        features_down = self.downsample(features)      # (B, base_channels, H/2, W/2)
+        features = self.encoder(x)  # (B, base_channels, H, W)
+        features_down = self.downsample(features)  # (B, base_channels, H/2, W/2)
         features_transformed = self.transformer_stage(features_down)  # (B, base_channels, H/2, W/2)
         residual = self.decoder_conv(features_transformed)  # (B, 3, H/2, W/2)
         residual_up = F.interpolate(residual, size=res_out, mode='bicubic', align_corners=False)
         out = upscaled_input + residual_up
         out = self.output_activation(out)
         return out
+
 
 # Quick test when running this file directly.
 if __name__ == "__main__":

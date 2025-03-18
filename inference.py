@@ -52,7 +52,7 @@ def main(args):
 
     # Load model.
     model = TransformerModel().to(device)
-    checkpoint_path = get_latest_checkpoint(args.checkpoint_dir)
+    checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f"Loading checkpoint: {checkpoint_path}")
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.eval()

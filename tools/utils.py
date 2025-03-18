@@ -19,7 +19,7 @@ def get_latest_checkpoint(checkpoint_dir):
 
     checkpoint_files = sorted(checkpoint_files, key=extract_epoch)
     latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[-1])
-    return latest_checkpoint
+    return latest_checkpoint, extract_epoch(latest_checkpoint)
 
 
 resolutions = {
