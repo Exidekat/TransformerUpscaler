@@ -1,8 +1,8 @@
 # TransformerUpscaler
 ### ML@SJSU
 
-## Transformer Model Architecture
-![Transformer Model Architecture](resources/architecture.png)
+## Model Architecture
+![Model Architecture](resources/architecture.png)
 
 ## Train
 `python train.py --data_dir images/training_set`
