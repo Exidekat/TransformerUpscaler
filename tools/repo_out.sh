@@ -8,10 +8,10 @@ set -e
 # --- CONFIGURATION ---
 
 # Directory to scan (default current directory).
-FILES_DIR="../"
+FILES_DIR="./"
 
 # Array of file extensions to include.
-EXTENSIONS=(".py")
+EXTENSIONS=(".py" ".md")
 
 # Array of filepath contents to exclude.
 # If you need more (e.g., "dist", "build", "test"), add them here:
