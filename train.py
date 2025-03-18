@@ -2,8 +2,13 @@
 train.py
 
 This script instantiates the TransformerModel and trains it on data loaded
-using the highres_img_dataset. The low resolution images (720×1280) are fed
-to the network and the output (1080×1920) is compared with the high resolution target.
+using the highres_img_dataset. The dataloader now generates three LR–HR pairs
+for each image (720→1080, 720→1440, and 1080→1440). Because the LR–HR pairs
+have different resolutions, a custom collate function is used that returns lists
+of tensors. The training loop then iterates over each sample in the batch, computes
+the loss individually (by passing the desired HR resolution to the model), and averages
+the loss before backpropagation.
+
 Hyperparameters can be adjusted via command-line arguments.
 """
 
@@ -18,53 +23,65 @@ from torch.utils.data import DataLoader
 from data_handling.data_class import highres_img_dataset
 from model.TransformerModel import TransformerModel
 
+def custom_collate_fn(batch):
+    """
+    Custom collate function that returns a tuple of lists.
+    Each element in the batch is a tuple (lr_tensor, hr_tensor).
+    """
+    lr_list, hr_list = zip(*batch)
+    return list(lr_list), list(hr_list)
+
 def main(args):
-    # if no gpu available, use cpu. if on macos>=13.0, use mps
-    DEVICE = "cpu"
-
+    # Device selection: use mps if available, else cuda, otherwise cpu.
     if torch.backends.mps.is_built():
-        DEVICE = "mps"
+        device = torch.device("mps")
     elif torch.backends.cuda.is_built():
-        DEVICE = "cuda"
-
-    device = torch.device(DEVICE)
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
     print(f"Training on device: {device}")
 
-    # Create dataset and DataLoader
+    # Create dataset and DataLoader with custom collate function.
     dataset = highres_img_dataset(args.data_dir)
-    dataloader = DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True
-    )
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
+                            num_workers=4, pin_memory=True, collate_fn=custom_collate_fn)
 
-    # Instantiate the TransformerModel and move it to the device
+    # Instantiate the TransformerModel and move it to the device.
     model = TransformerModel().to(device)
 
-    # Define loss function and optimizer
+    # Define loss function and optimizer.
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     model.train()
     for epoch in range(args.epochs):
         running_loss = 0.0
-        for batch_idx, (lr_imgs, hr_imgs) in enumerate(dataloader):
-            lr_imgs = lr_imgs.to(device)
-            hr_imgs = hr_imgs.to(device)
-
+        for batch_idx, (lr_list, hr_list) in enumerate(dataloader):
             optimizer.zero_grad()
-            # Forward pass: generate upscaled output from low resolution images
-            outputs = model(lr_imgs)
-            loss = criterion(outputs, hr_imgs)
-            loss.backward()
+            batch_losses = []
+            # Process each sample in the batch individually.
+            for lr_img, hr_img in zip(lr_list, hr_list):
+                # Add batch dimension (1, C, H, W)
+                lr_img = lr_img.unsqueeze(0).to(device)
+                hr_img = hr_img.unsqueeze(0).to(device)
+                # Determine target resolution from the HR image shape.
+                target_res = (hr_img.shape[2], hr_img.shape[3])
+                output = model(lr_img, res_out=target_res)
+                loss = criterion(output, hr_img)
+                batch_losses.append(loss)
+            # Average the loss over the batch.
+            batch_loss = sum(batch_losses) / len(batch_losses)
+            batch_loss.backward()
             optimizer.step()
 
-            running_loss += loss.item()
+            running_loss += batch_loss.item()
             if batch_idx % args.log_interval == 0:
-                print(f"Epoch [{epoch+1}/{args.epochs}] Step [{batch_idx+1}/{len(dataloader)}] Loss: {loss.item():.4f}")
+                print(f"Epoch [{epoch+1}/{args.epochs}] Step [{batch_idx+1}/{len(dataloader)}] Loss: {batch_loss.item():.4f}")
 
         avg_loss = running_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{args.epochs}] completed. Average Loss: {avg_loss:.4f}")
 
-        # Save model checkpoint periodically
+        # Save model checkpoint periodically.
         if (epoch + 1) % args.checkpoint_interval == 0:
             os.makedirs(args.checkpoint_dir, exist_ok=True)
             checkpoint_path = os.path.join(args.checkpoint_dir, f"model_epoch_{epoch+1}.pth")

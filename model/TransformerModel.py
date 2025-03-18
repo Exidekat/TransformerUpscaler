@@ -1,164 +1,222 @@
 """
 TransformerModel.py
 
-Revised Transformer-based model for image upscaling.
+Revised Transformer-based model for image upscaling with a hierarchical transformer
+architecture using relative positional encoding (inspired by Swin Transformers).
 
-This architecture incorporates:
-  - A deeper CNN encoder/decoder with residual connections.
-  - A global residual connection: The network predicts a residual image that is added to a bicubic upscaled input.
-  - A transformer module for global context that now operates on a lower number of tokens
-    (using a larger patch size) to mitigate excessive memory allocation on MPS.
+Input: Low resolution image (B, 3, H, W) where H, W are arbitrary (e.g., 720×1280)
+Output: Upscaled image (B, 3, target_H, target_W) (e.g., 1080×1920)
 
-Input: Low resolution image (B, 3, 720, 1280)
-Output: Upscaled image (B, 3, 1080, 1920)
+Architecture:
+  1. Encoder: Two convolutional layers (with ReLU) extract low-level features.
+  2. Downsampling: A convolution with stride=2 reduces the spatial dimensions.
+  3. Hierarchical Transformer Stage: The downsampled feature map is padded (if necessary)
+     so its height and width are multiples of window_size. Then it is partitioned into non-overlapping
+     windows and processed by a series of transformer blocks with relative positional bias.
+  4. Decoder: A simple CNN refines the processed features to predict a residual image.
+  5. Global Residual: The input is bicubically upsampled to the target resolution and added to the predicted residual.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-class TransformerBlock(nn.Module):
+### Helper functions for window partitioning
+def window_partition(x, window_size):
     """
-    A transformer block that applies multi-head self-attention
-    and a feed-forward network with residual connections.
+    Partitions input tensor x into non-overlapping windows.
+    Input:
+      x: (B, H, W, C)
+      window_size: int
+    Returns:
+      windows: (B, num_windows, window_size*window_size, C)
     """
+    B, H, W, C = x.shape
+    x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
+    windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, -1, window_size * window_size, C)
+    return windows
 
-    def __init__(self, embed_dim, num_heads, mlp_ratio=4.0, dropout=0.1):
-        super(TransformerBlock, self).__init__()
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.attn = nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(embed_dim, int(embed_dim * mlp_ratio)),
-            nn.GELU(),
-            nn.Linear(int(embed_dim * mlp_ratio), embed_dim),
-            nn.Dropout(dropout)
+def window_reverse(windows, window_size, H, W):
+    """
+    Reconstruct the original tensor from windows.
+    Input:
+      windows: (B, num_windows, window_size*window_size, C)
+      window_size: int
+      H, W: height and width of padded feature map
+    Returns:
+      x: (B, H, W, C)
+    """
+    B = windows.shape[0]
+    x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
+    x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, -1)
+    return x
+
+### Relative Window Attention Module
+class WindowAttention(nn.Module):
+    """
+    Window based multi-head self attention with relative positional bias.
+    """
+    def __init__(self, dim, window_size, num_heads, dropout=0.0):
+        super(WindowAttention, self).__init__()
+        self.dim = dim
+        self.window_size = window_size  # assume square window: window_size x window_size
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=True)
+        self.attn_drop = nn.Dropout(dropout)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(dropout)
+
+        # Relative position bias table.
+        num_relative_distance = (2 * window_size - 1) * (2 * window_size - 1)
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros(num_relative_distance, num_heads)
         )
 
-    def forward(self, x):
-        # x: (B, N, embed_dim)
-        residual = x
-        x = self.norm1(x)
-        attn_out, _ = self.attn(x, x, x)
-        x = residual + attn_out  # Residual connection after attention
+        # Get pairwise relative position index for tokens in the window.
+        coords_h = torch.arange(window_size)
+        coords_w = torch.arange(window_size)
+        coords = torch.stack(torch.meshgrid(coords_h, coords_w, indexing="ij"))  # (2, window_size, window_size)
+        coords_flatten = torch.flatten(coords, 1)  # (2, window_size*window_size)
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # (2, N, N)
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # (N, N, 2)
+        relative_coords[:, :, 0] += window_size - 1
+        relative_coords[:, :, 1] += window_size - 1
+        relative_coords[:, :, 0] *= 2 * window_size - 1
+        relative_position_index = relative_coords.sum(-1)  # (N, N)
+        self.register_buffer("relative_position_index", relative_position_index)
+        nn.init.trunc_normal_(self.relative_position_bias_table, std=0.02)
 
-        residual = x
-        x = self.norm2(x)
-        x = residual + self.mlp(x)  # Residual connection after MLP
+    def forward(self, x):
+        """
+        x: (B*num_windows, N, C)
+        """
+        B_, N, C = x.shape
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]  # each: (B_, num_heads, N, head_dim)
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))  # (B_, num_heads, N, N)
+
+        # Add relative positional bias.
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            self.window_size * self.window_size, self.window_size * self.window_size, -1)
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).unsqueeze(0)  # (1, num_heads, N, N)
+        attn = attn + relative_position_bias
+
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
         return x
 
+### Window Transformer Block
+class WindowTransformerBlock(nn.Module):
+    """
+    Transformer block operating on local windows.
+    """
+    def __init__(self, dim, window_size, num_heads, mlp_ratio=4.0, dropout=0.0):
+        super(WindowTransformerBlock, self).__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = WindowAttention(dim, window_size, num_heads, dropout)
+        self.norm2 = nn.LayerNorm(dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, int(dim * mlp_ratio)),
+            nn.GELU(),
+            nn.Linear(int(dim * mlp_ratio), dim),
+            nn.Dropout(dropout)
+        )
+    def forward(self, x):
+        # x: (B, num_windows, N, C)
+        B, num_windows, N, C = x.shape
+        x = x.view(B * num_windows, N, C)
+        shortcut = x
+        x = self.norm1(x)
+        x = self.attn(x)
+        x = shortcut + x
+        x = x + self.mlp(self.norm2(x))
+        x = x.view(B, num_windows, N, C)
+        return x
 
+### New Transformer Model
 class TransformerModel(nn.Module):
-    """
-    Revised TransformerModel for image upscaling.
-
-    Architecture overview:
-      1. A shallow CNN encoder extracts features from the LR image.
-      2. A downsampling layer reduces spatial dimensions.
-      3. A patch embedding converts the CNN feature map into a sequence of tokens.
-         (Using a larger patch size to reduce the total number of tokens.)
-      4. A series of transformer blocks processes these tokens.
-      5. A patch unembedding converts the tokens back to a spatial feature map.
-      6. A CNN decoder refines the features and predicts a residual image.
-      7. The predicted residual is added to a bicubic upsampled version of the input,
-         producing the final upscaled output.
-    """
-
     def __init__(
-            self,
-            in_channels=3,
-            base_channels=64,
-            embed_dim=64,
-            transformer_dim=128,
-            num_transformer_blocks=8,
-            num_heads=8,
-            mlp_ratio=4.0,
-            dropout=0.1
+        self,
+        in_channels=3,
+        base_channels=64,
+        num_transformer_blocks=4,
+        num_heads=4,
+        mlp_ratio=4.0,
+        dropout=0.0,
+        window_size=8
     ):
         super(TransformerModel, self).__init__()
-
-        # Shallow CNN encoder to extract initial features from the low resolution input
-        self.conv1 = nn.Conv2d(in_channels, base_channels, kernel_size=3, stride=1, padding=1)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
-
-        # Downsample features: from (720,1280) to (360,640)
+        # Encoder: two convolutional layers with ReLU.
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, base_channels, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True)
+        )
+        # Downsample: reduce resolution by a factor of 2.
         self.downsample = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=2, padding=1)
-
-        # Patch Embedding: convert the downsampled feature map to tokens.
-        # Using kernel_size=8 and stride=8 on a (360,640) feature map yields tokens of size (45,80)
-        # resulting in 45*80 = 3600 tokens instead of 14400.
-        self.patch_embed = nn.Conv2d(base_channels, transformer_dim, kernel_size=8, stride=8)
-        self.token_H = 360 // 8  # 45
-        self.token_W = 640 // 8  # 80
-        self.num_tokens = self.token_H * self.token_W  # 3600 tokens
-
-        # Learnable positional embedding for the token sequence.
-        self.pos_embed = nn.Parameter(torch.randn(1, self.num_tokens, transformer_dim))
-
-        # Transformer blocks for global context
-        self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(transformer_dim, num_heads, mlp_ratio, dropout)
+        self.window_size = window_size
+        # Hierarchical Transformer stage: process feature map windows.
+        self.blocks = nn.ModuleList([
+            WindowTransformerBlock(dim=base_channels, window_size=window_size, num_heads=num_heads,
+                                    mlp_ratio=mlp_ratio, dropout=dropout)
             for _ in range(num_transformer_blocks)
         ])
+        # Decoder: a simple CNN to predict the residual.
+        self.decoder_conv = nn.Sequential(
+            nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
+        )
+        self.output_activation = nn.Sigmoid()
 
-        # Patch Unembedding: convert token sequence back to spatial feature map.
-        self.patch_unembed = nn.ConvTranspose2d(transformer_dim, base_channels, kernel_size=8, stride=8)
-
-        # CNN decoder: refine features and predict a residual image.
-        self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
-        self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
-
-    def forward(self, x, res=(1080, 1920)):
+    def transformer_stage(self, x):
         """
-        Forward pass:
-          - x: Low resolution image of shape (B, 3, 720, 1280)
-          - Returns: Upscaled image of shape (B, 3, 1080, 1920)
+        Apply the hierarchical transformer stage to x.
+        x: (B, C, H, W) from the downsampled encoder output.
         """
-        # Compute a global residual: bicubic upscale of the input image.
-        upscaled_input = F.interpolate(x, size=res, mode='bicubic', align_corners=False)
+        B, C, H, W = x.shape
+        # Pad H and W so they are multiples of window_size.
+        pad_bottom = (self.window_size - H % self.window_size) % self.window_size
+        pad_right = (self.window_size - W % self.window_size) % self.window_size
+        if pad_bottom != 0 or pad_right != 0:
+            # Pad (left, right, top, bottom)
+            x = F.pad(x, (0, pad_right, 0, pad_bottom))
+        B, C, Hp, Wp = x.shape  # Now Hp and Wp are divisible by window_size.
+        # Rearrange for window partitioning.
+        x = x.permute(0, 2, 3, 1).contiguous()  # (B, Hp, Wp, C)
+        windows = window_partition(x, self.window_size)  # (B, num_windows, window_size*window_size, C)
+        for blk in self.blocks:
+            windows = blk(windows)
+        x = window_reverse(windows, self.window_size, Hp, Wp)  # (B, Hp, Wp, C)
+        # Remove padding.
+        if pad_bottom != 0 or pad_right != 0:
+            x = x[:, :H, :W, :].contiguous()
+        x = x.permute(0, 3, 1, 2).contiguous()  # back to (B, C, H, W)
+        return x
 
-        # Encoder: extract features using a shallow CNN.
-        feat = self.relu(self.conv1(x))
-        feat = self.relu(self.conv2(feat))
-
-        # Downsample feature map to reduce spatial dimensions.
-        feat_down = self.downsample(feat)  # Shape: (B, base_channels, 360, 640)
-
-        # Patch Embedding: convert feature map to a sequence of tokens.
-        tokens = self.patch_embed(feat_down)  # (B, transformer_dim, 45, 80)
-        B, C, H, W = tokens.shape
-        tokens = tokens.flatten(2).transpose(1, 2)  # (B, num_tokens, transformer_dim)
-
-        # Add positional embeddings.
-        tokens = tokens + self.pos_embed
-
-        # Process tokens through a series of transformer blocks.
-        for block in self.transformer_blocks:
-            tokens = block(tokens)
-
-        # Reshape tokens back into spatial feature maps.
-        tokens = tokens.transpose(1, 2).view(B, C, H, W)  # (B, transformer_dim, 45, 80)
-
-        # Patch Unembedding: convert tokens back to CNN feature space.
-        feat_trans = self.patch_unembed(tokens)  # (B, base_channels, 360, 640)
-
-        # Combine transformer features with the original downsampled features via skip connection.
-        combined_feat = feat_down + feat_trans
-
-        # CNN Decoder: refine features and predict the residual image.
-        dec = self.relu(self.decoder_conv1(combined_feat))
-        residual = self.decoder_conv2(dec)  # Predicted residual image at lower resolution
-
-        # Upsample the residual to the final output resolution.
-        residual_up = F.interpolate(residual, size=res, mode='bicubic', align_corners=False)
-
-        # Add the residual to the bicubic-upscaled input.
+    def forward(self, x, res_out=(1080, 1920)):
+        """
+        x: (B, 3, H, W) with arbitrary resolution (specified as res_in during inference)
+        res_out: desired output resolution (target_H, target_W)
+        """
+        # Global residual: bicubic upsample of input.
+        upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
+        features = self.encoder(x)                   # (B, base_channels, H, W)
+        features_down = self.downsample(features)      # (B, base_channels, H/2, W/2)
+        features_transformed = self.transformer_stage(features_down)  # (B, base_channels, H/2, W/2)
+        residual = self.decoder_conv(features_transformed)  # (B, 3, H/2, W/2)
+        residual_up = F.interpolate(residual, size=res_out, mode='bicubic', align_corners=False)
         out = upscaled_input + residual_up
-        out = torch.clamp(out, 0.0, 1.0)
+        out = self.output_activation(out)
         return out
-
 
 # Quick test when running this file directly.
 if __name__ == "__main__":

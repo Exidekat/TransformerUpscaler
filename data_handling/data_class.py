@@ -3,8 +3,13 @@ data_handling/data_class.py
 
 This module contains the highres_img_dataset, a PyTorch Dataset class
 for loading training images for our Transformer upscaler.
-It converts each image into a low resolution input (720×1280) and a high resolution
-target (1080×1920) so that the network (which outputs Full HD images) can be trained properly.
+
+For every high-resolution image provided, this dataset generates three unique LR–HR pairs:
+  1. LR: 720×1280 → HR: 1080×1920,
+  2. LR: 720×1280 → HR: 1440×2560, and
+  3. LR: 1080×1920 → HR: 1440×2560.
+
+This augmentation maximizes the use of each image.
 """
 
 import os
@@ -12,7 +17,6 @@ from PIL import Image
 import torchvision.transforms as transform
 from torch.utils.data import Dataset
 import torch
-
 
 class highres_img_dataset(Dataset):
     def __init__(self, image_dir):
@@ -23,36 +27,47 @@ class highres_img_dataset(Dataset):
             for file in os.listdir(image_dir)
             if file.lower().endswith('.jpg')
         ]
+        # Predefined scale pairs for augmentation.
+        # Each pair contains 'lr' and 'hr' resolution tuples.
+        self.scale_pairs = [
+            {"lr": (720, 1280), "hr": (1080, 1920)},
+            {"lr": (720, 1280), "hr": (1440, 2560)},
+            {"lr": (1080, 1920), "hr": (1440, 2560)}
+        ]
 
     def __len__(self):
-        return len(self.image_files)
+        # Each image is used to generate all three pairs.
+        return len(self.image_files) * len(self.scale_pairs)
 
-    # Returns a tuple: (low resolution input, high resolution target) as RGB image tensors.
     def __getitem__(self, idx):
-        img_path = self.image_files[idx]
+        # Determine which image and which scale pair to use.
+        num_pairs = len(self.scale_pairs)
+        image_idx = idx // num_pairs
+        pair_idx = idx % num_pairs
 
-        # Open the image and convert it to RGB
+        img_path = self.image_files[image_idx]
+
+        # Open the image and convert it to RGB.
         hr_image = Image.open(img_path).convert('RGB')
 
-        # Create a low resolution version for model input (720p)
+        # Use the corresponding scale pair.
+        pair = self.scale_pairs[pair_idx]
+
+        # Create transforms for LR and HR images.
         lr_transform = transform.Compose([
-            transform.Resize((720, 1280)),
+            transform.Resize(pair["lr"]),
             transform.ToTensor()
         ])
-
-        # Create a high resolution version for model target (Full HD: 1080x1920)
         hr_transform = transform.Compose([
-            transform.Resize((1080, 1920)),
+            transform.Resize(pair["hr"]),
             transform.ToTensor()
         ])
 
         lr_image_tensor = lr_transform(hr_image)
         hr_image_tensor = hr_transform(hr_image)
 
-        # Ensure that image tensors are normalized to the [0, 1] range
-        assert torch.min(lr_image_tensor) >= 0.0 and torch.max(
-            lr_image_tensor) <= 1.0, "LR image tensor not in range [0, 1]"
-        assert torch.min(hr_image_tensor) >= 0.0 and torch.max(
-            hr_image_tensor) <= 1.0, "HR image tensor not in range [0, 1]"
+        # Ensure that image tensors are normalized between 0 and 1.
+        assert torch.min(lr_image_tensor) >= 0.0 and torch.max(lr_image_tensor) <= 1.0, "LR image tensor not in range [0, 1]"
+        assert torch.min(hr_image_tensor) >= 0.0 and torch.max(hr_image_tensor) <= 1.0, "HR image tensor not in range [0, 1]"
 
         return lr_image_tensor, hr_image_tensor
