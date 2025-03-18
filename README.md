@@ -2,7 +2,7 @@
 ### ML@SJSU
 
 ## Model Architecture
-![Model Architecture](resources/architecture.png)
+![Model Architecture](resources/model.png)
 
 ## Train
 `python train.py --data_dir images/training_set`
