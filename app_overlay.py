@@ -6,12 +6,12 @@ This script provides an interactive window selection and overlay for the Transfo
 It works cross‑platform:
   - On macOS, it uses Quartz (via PyObjC) to list windows and capture the content of the selected window.
   - On Windows, it uses pygetwindow to list windows and PIL.ImageGrab to capture the window content.
-  - On Linux, it falls back to capturing a screen region with mss (note: this may capture the overlay).
+  - On Linux, it falls back to capturing a screen region using mss.
 
-Once the user selects a window, the script continuously captures the _target window’s_ content (using OS‑specific methods),
-runs our TransformerModel on the captured image (after resizing it to 720×1280),
+Once the user selects a window, the script continuously captures the _target window’s_ content
+(using OS‑specific methods), runs our TransformerModel on the captured image (after resizing to 720×1280),
 and displays an overlay (via OpenCV) that is resized to cover the target window.
-The overlay window is repositioned so it always sits exactly over the target.
+Additionally, on macOS the overlay window is adjusted upward slightly, and is set to be click‑through.
 Press "q" to exit.
 """
 
@@ -25,24 +25,22 @@ import argparse
 import platform
 import mss
 
-# Platform‐specific imports
+# Platform‑specific imports
 if platform.system() == "Darwin":
     import Quartz
+    from AppKit import NSApplication
 elif platform.system() == "Windows":
     import pygetwindow as gw
 else:
-    # On Linux we still try to use pygetwindow for listing window titles.
-    import pygetwindow as gw
+    import pygetwindow as gw  # Linux fallback
 
 from model.TransformerModel import TransformerModel
-from tools.utils import get_latest_checkpoint
+from tools.utils import get_latest_checkpoint, resolutions
 
 
 # ========= macOS FUNCTIONS =========
 def list_windows_macos():
-    """
-    Retrieve a list of on-screen windows (as dictionaries) with non‑empty titles using Quartz.
-    """
+    """Retrieve a list of on‑screen windows (as dictionaries) with non‑empty titles using Quartz."""
     window_info_list = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
     windows = []
     for window in window_info_list:
@@ -53,7 +51,7 @@ def list_windows_macos():
 
 
 def select_window_macos():
-    """List available macOS windows and let the user select one by number."""
+    """List available macOS windows (using Quartz) and let the user select one by number."""
     windows = list_windows_macos()
     if not windows:
         raise Exception("No windows found on macOS.")
@@ -68,7 +66,7 @@ def select_window_macos():
 def get_window_bounds_macos(window):
     """
     Given a Quartz window dictionary, extract its bounding box as (left, top, width, height).
-    Note: Quartz coordinates have origin at the bottom-left.
+    Note: Quartz coordinates have origin at the bottom‑left.
     """
     bounds = window.get('kCGWindowBounds', {})
     left = int(bounds.get('X', 0))
@@ -93,17 +91,35 @@ def capture_window_content_macos(window):
     rect = CGRectMake(x, y, width, height)
     cg_image = CGWindowListCreateImage(rect, kCGWindowListOptionIncludingWindow, window_id, kCGWindowImageDefault)
     from PIL import Image
-    import Quartz
     if cg_image is None:
         return None
+    # Get image dimensions.
+    import Quartz
     w = Quartz.CGImageGetWidth(cg_image)
     h = Quartz.CGImageGetHeight(cg_image)
     bytes_per_row = Quartz.CGImageGetBytesPerRow(cg_image)
     data_provider = Quartz.CGImageGetDataProvider(cg_image)
     data = Quartz.CGDataProviderCopyData(data_provider)
-    # Create a PIL image from the raw data (assumed to be in RGBA).
     img = Image.frombuffer("RGBA", (w, h), data, "raw", "RGBA", bytes_per_row, 1)
     return img.convert("RGB")
+
+
+def set_overlay_passthrough_macos(window_title):
+    """
+    Find the NSWindow with the given title and set it to ignore mouse events.
+    This makes the overlay window click‑through.
+    """
+    from AppKit import NSApplication
+    app = NSApplication.sharedApplication()
+    # Give the system a moment to create the window.
+    time.sleep(0.5)
+    for win in app.windows():
+        # The title may be an NSString; convert to Python string.
+        if window_title in str(win.title()):
+            win.setIgnoresMouseEvents_(True)
+            print(f"Set window '{win.title()}' to be click-through.")
+            return
+    print("Could not set overlay window to click-through.")
 
 
 # ========= WINDOWS FUNCTIONS =========
@@ -118,22 +134,17 @@ def select_window_windows():
         print(f"{i}: {title}")
     idx = int(input("Enter the number of the window to capture: "))
     selected_title = titles[idx - 1]
-    # Try to retrieve the window object.
     if hasattr(gw, "getWindowsWithTitle"):
         windows = gw.getWindowsWithTitle(selected_title)
         if windows:
             return windows[0]
-    # Fallback: prompt the user for coordinates.
     print(f"Could not automatically retrieve window object for '{selected_title}'.")
     left = int(input("Left: "))
     top = int(input("Top: "))
     width = int(input("Width: "))
     height = int(input("Height: "))
-
-    # Create a dummy object with these attributes.
     class DummyWindow:
         pass
-
     win = DummyWindow()
     win.left = left
     win.top = top
@@ -165,13 +176,20 @@ def capture_window_content_linux(monitor):
 
 # ========= MAIN APP =========
 def main(args):
+    if args.res_out not in resolutions.keys():
+        print(f"Resolution {args.res_out} not found in supported output resolutions.")
+        exit(-1)
+    res = resolutions[args.res_out]
+
     sys_platform = platform.system()
     if sys_platform == "Darwin":
         selected_window = select_window_macos()
         selected_title = selected_window.get('kCGWindowName', 'No Title')
         print(f"Selected window: {selected_title}")
         left, top, width, height = get_window_bounds_macos(selected_window)
-        # For macOS, we capture via Quartz.
+        # On macOS, the overlay window is observed to be slightly low;
+        # adjust the top coordinate by subtracting an offset.
+        top = max(0, top - 65)
         capture_func = lambda: capture_window_content_macos(selected_window)
     elif sys_platform == "Windows":
         win = select_window_windows()
@@ -179,7 +197,7 @@ def main(args):
         capture_func = lambda: capture_window_content_windows(win)
         left, top, width, height = win.left, win.top, win.width, win.height
     else:
-        # Linux fallback: use pygetwindow to get bounding box.
+        # Linux fallback.
         win = select_window_windows()
         print(f"Selected window bounds: left={win.left}, top={win.top}, width={win.width}, height={win.height}")
         monitor = {"top": win.top, "left": win.left, "width": win.width, "height": win.height}
@@ -197,7 +215,7 @@ def main(args):
         device = torch.device("cpu")
     print(f"Using device: {device}")
 
-    # Load the TransformerModel and latest checkpoint.
+    # Load TransformerModel and latest checkpoint.
     model = TransformerModel().to(device)
     checkpoint_path = get_latest_checkpoint(args.checkpoint_dir)
     print(f"Loading checkpoint from: {checkpoint_path}")
@@ -211,14 +229,19 @@ def main(args):
     ])
     to_pil = transforms.ToPILImage()
 
-    # Create an OpenCV overlay window.
+    # Create an OpenCV window for the overlay.
     window_name = "Overlay Upscaled"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
 
+    # On macOS, attempt to set the overlay window to be click-through.
+    if sys_platform == "Darwin":
+        # Give a moment for the window to be created.
+        time.sleep(0.5)
+        set_overlay_passthrough_macos(window_name)
+
     while True:
         frame_start = time.time()
-        # Capture the target window's content using OS-specific API.
         captured_img = capture_func()
         if captured_img is None:
             print("Failed to capture window content.")
@@ -229,16 +252,15 @@ def main(args):
 
         # Run inference.
         with torch.no_grad():
-            upscaled = model(lr_img)  # Expected output: (1, 3, 1080, 1920)
+            upscaled = model(lr_img, res)  # Expected output: (1, 3, res[0], res[1])
         upscaled = upscaled.squeeze(0).cpu()
         upscaled_pil = to_pil(upscaled)
         upscaled_np = np.array(upscaled_pil)
-        upscaled_np = cv2.cvtColor(upscaled_np, cv2.COLOR_RGB2BGR)
 
-        # Resize upscaled image to match the target window dimensions.
+        # Resize the output to match the target window dimensions.
         overlay = cv2.resize(upscaled_np, (width, height))
 
-        # Reposition the overlay window to match the target window.
+        # Reposition the overlay window.
         cv2.moveWindow(window_name, left, top)
 
         # Calculate and display FPS.
@@ -256,9 +278,11 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Overlay App for Transformer Upscaler with OS-Specific Window Capture"
+        description="Overlay App for Transformer Upscaler with OS-Specific Window Capture and Passthrough Overlay (Cross-Platform)"
     )
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints",
                         help="Directory containing model checkpoints")
+    parser.add_argument("--res_out", type=str, default='1080',
+                        help="Output resolution")
     args = parser.parse_args()
     main(args)

@@ -7,23 +7,20 @@ The input image is first resized to 720×1280 (low resolution) to match the mode
 The model produces a Full HD output (1080×1920), which is then saved to the specified output file.
 """
 
-import os
 import argparse
 import torch
 from PIL import Image
 import torchvision.transforms as transforms
 from model.TransformerModel import TransformerModel
-from tools.utils import get_latest_checkpoint
+from tools.utils import get_latest_checkpoint, resolutions
 
-resolutions = {
-    '1080': (1080, 1920),
-    '1440': (1440, 2560),
-    '2k': (1440, 2560),
-    '2160': (2160, 3840),
-    '4k': (2160, 3840)
-}
 
 def main(args):
+    if args.res_out not in resolutions.keys():
+        print(f"Resolution {args.res_out} not found in supported output resolutions.")
+        exit(-1)
+    res = resolutions[args.res_out]
+
     # if no gpu available, use cpu. if on macos>=13.0, use mps
     DEVICE = "cpu"
 
@@ -34,11 +31,6 @@ def main(args):
 
     device = torch.device(DEVICE)
     print(f"Running inference on device: {device}")
-
-    if args.res_out not in resolutions.keys():
-        print(f"Resolution {args.res_out} not found in supported output resolutions.")
-        exit(-1)
-    res = resolutions[args.res_out]
 
     # For saving images with Pillow
     to_pil = transforms.ToPILImage()

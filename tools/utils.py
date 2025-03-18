@@ -20,3 +20,12 @@ def get_latest_checkpoint(checkpoint_dir):
     checkpoint_files = sorted(checkpoint_files, key=extract_epoch)
     latest_checkpoint = os.path.join(checkpoint_dir, checkpoint_files[-1])
     return latest_checkpoint
+
+
+resolutions = {
+    '1080': (1080, 1920),
+    '1440': (1440, 2560),
+    '2k': (1440, 2560),
+    '2160': (2160, 3840),
+    '4k': (2160, 3840)
+}
