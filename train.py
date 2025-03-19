@@ -118,7 +118,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the TransformerModel for image upscaling")
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Path to the directory containing training images (.jpg)")
-    parser.add_argument("--batch_size", type=int, default=4,
+    parser.add_argument("--batch_size", type=int, default=12,
                         help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=10,
                         help="Number of training epochs")

@@ -25,8 +25,15 @@ def main(args):
     if args.res_out not in resolutions.keys():
         print(f"Resolution {args.res_out} not found in supported output resolutions.")
         exit(-1)
+    if args.res_in:
+        if args.res_in not in resolutions.keys():
+            print(f"Resolution {args.res_in} not found in supported input resolutions.")
+            exit(-1)
+        res_in = resolutions[args.res_in]  # dynamic input resolution
+    else:
+        res_in = None
+
     res_out = resolutions[args.res_out]  # e.g., (1080, 1920)
-    res_in = (args.res_in_h, args.res_in_w)  # dynamic input resolution
 
     # Device selection.
     if torch.backends.mps.is_built():
@@ -49,6 +56,8 @@ def main(args):
     lr_transform = transforms.Compose([
         transforms.Resize(res_in),
         transforms.ToTensor()
+    ]) if res_in is not None else transforms.Compose([
+        transforms.ToTensor()
     ])
     to_pil = transforms.ToPILImage()
 
@@ -63,18 +72,19 @@ def main(args):
 
     # Instantiate and optionally compile the model.
     model = TransformerModel().to(device)
-    if args.compile:
-        try:
-            model = torch.compile(model)
-            print("Model compiled with torch.compile!")
-        except Exception as e:
-            print(f"torch.compile failed: {e}")
 
     # Load checkpoint.
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f"Loading checkpoint: {checkpoint_path}")
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.eval()
+
+    if args.compile:
+        try:
+            model = torch.compile(model)
+            print("Model compiled with torch.compile!")
+        except Exception as e:
+            print(f"torch.compile failed: {e}")
 
     # Run inference under mixed precision).
     with torch.autocast(device_type=device.type, dtype=torch.float16):
@@ -96,8 +106,7 @@ if __name__ == "__main__":
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
     parser.add_argument("--res_out", type=str, default='1080',
                         help="Output resolution key (e.g., '1080', '1440', '2160', etc.)")
-    parser.add_argument("--res_in_h", type=int, default=720, help="Input resolution height (downscaled for model)")
-    parser.add_argument("--res_in_w", type=int, default=1280, help="Input resolution width (downscaled for model)")
+    parser.add_argument("--res_in", type=str, default=None, help="Input resolution key (None for no downscaling)")
     parser.add_argument("--inp", type=str, default="input.png", help="Output file path for the downscaled input image")
     parser.add_argument("--out", type=str, default="output.png", help="Output file path for the upscaled output image")
     parser.add_argument("--compile", action="store_true", help="Enable model compilation with torch.compile")

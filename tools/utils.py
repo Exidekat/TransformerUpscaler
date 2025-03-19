@@ -23,6 +23,7 @@ def get_latest_checkpoint(checkpoint_dir):
 
 
 resolutions = {
+    '720': (720, 1280),
     '1080': (1080, 1920),
     '1440': (1440, 2560),
     '2k': (1440, 2560),

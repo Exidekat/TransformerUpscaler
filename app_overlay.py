@@ -14,6 +14,7 @@ and displays an overlay (via OpenCV) that is resized to cover the target window.
 Additionally, on macOS the overlay window is adjusted upward slightly, and is set to be click‑through.
 Press "q" to exit.
 """
+import importlib
 
 import cv2
 import numpy as np
@@ -34,7 +35,6 @@ elif platform.system() == "Windows":
 else:
     import pygetwindow as gw  # Linux fallback
 
-from model.TransformerModel import TransformerModel
 from tools.utils import get_latest_checkpoint, resolutions
 
 
@@ -176,10 +176,6 @@ def capture_window_content_linux(monitor):
 
 # ========= MAIN APP =========
 def main(args):
-    if args.res_out not in resolutions.keys():
-        print(f"Resolution {args.res_out} not found in supported output resolutions.")
-        exit(-1)
-    res = resolutions[args.res_out]
 
     sys_platform = platform.system()
     if sys_platform == "Darwin":
@@ -206,6 +202,19 @@ def main(args):
 
     print(f"Using bounding box: left={left}, top={top}, width={width}, height={height}")
 
+    if args.res_out not in resolutions.keys():
+        print(f"Resolution {args.res_out} not found in supported output resolutions.")
+        exit(-1)
+    if args.res_in:
+        if args.res_in not in resolutions.keys():
+            print(f"Resolution {args.res_in} not found in supported input resolutions.")
+            exit(-1)
+        res_in = resolutions[args.res_in]  # dynamic input resolution
+    else:
+        res_in = None
+
+    res_out = resolutions[args.res_out]  # e.g., (1080, 1920)
+
     # Device selection.
     if torch.backends.mps.is_built():
         device = torch.device("mps")
@@ -215,7 +224,15 @@ def main(args):
         device = torch.device("cpu")
     print(f"Using device: {device}")
 
-    # Load TransformerModel and latest checkpoint.
+    # Dynamically import the desired model module from models/{args.model}/model.py
+    model_module = importlib.import_module(f"models.{args.model}.model")
+    TransformerModel = model_module.TransformerModel
+
+    # Set default checkpoint directory if not provided.
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = f"models/{args.model}/checkpoints"
+
+    # Instantiate the model and load the latest checkpoint
     model = TransformerModel().to(device)
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f"Loading checkpoint from: {checkpoint_path}")
@@ -224,7 +241,9 @@ def main(args):
 
     # Define transforms.
     lr_transform = transforms.Compose([
-        transforms.Resize((720, 1280)),
+        transforms.Resize(res_in),
+        transforms.ToTensor()
+    ]) if res_in is not None else transforms.Compose([
         transforms.ToTensor()
     ])
     to_pil = transforms.ToPILImage()
@@ -252,7 +271,7 @@ def main(args):
 
         # Run inference.
         with torch.no_grad():
-            upscaled = model(lr_img, res)  # Expected output: (1, 3, res[0], res[1])
+            upscaled = model(lr_img, res_out)  # Expected output: (1, 3, res[0], res[1])
         upscaled = upscaled.squeeze(0).cpu()
         upscaled_pil = to_pil(upscaled)
         upscaled_np = np.array(upscaled_pil)
@@ -280,9 +299,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Overlay App for Transformer Upscaler with OS-Specific Window Capture and Passthrough Overlay (Cross-Platform)"
     )
-    parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints",
-                        help="Directory containing model checkpoints")
-    parser.add_argument("--res_out", type=str, default='1080',
+    parser.add_argument("--model", type=str, default="EfficientTransformer",
+                        help="Model name to use (corresponds to models/{model}/model.py)")
+    parser.add_argument("--checkpoint_dir", type=str, default=None,
+                        help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
+    parser.add_argument("--res_out", type=str, default='4k',
                         help="Output resolution")
+    parser.add_argument("--res_in", type=str, default=None, help="Input resolution key (None for no downscaling)")
     args = parser.parse_args()
     main(args)
