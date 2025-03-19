@@ -1,16 +1,18 @@
 #!/usr/bin/env python
 """
-inference.py
+inference_quantized.py
 
 This script loads the latest model checkpoint from the specified checkpoint directory,
 loads an input image, and performs upscaling using the specified TransformerModel.
-The input image is first resized to the desired input resolution (specified by --res_in_h and --res_in_w),
+It supports model quantization to reduce the footprint and improve inference speed.
+The input image is first resized to the desired input resolution (specified by --res_in),
 and then the model produces a high resolution output (e.g., 1080×1920) as specified by --res_out.
-Mixed precision inference is enabled on CUDA devices via torch.autocast.
+Quantization is applied post-training dynamically to all nn.Linear layers.
+Mixed precision inference is enabled on CUDA/MPS devices via torch.autocast.
 The resulting upscaled image is saved to disk.
 
 Usage:
-    python inference.py --image_path images/training_set/image_0.jpg --model EfficientTransformer --res_in_h 720 --res_in_w 1280 --res_out 1080 [--compile]
+    python inference_quantized.py --image_path images/training_set/image_0.jpg --model EfficientTransformer --res_in 720 --res_out 1080 [--compile] [--quantize]
 """
 
 import argparse
@@ -19,9 +21,10 @@ import torch
 from PIL import Image
 import torchvision.transforms as transforms
 from tools.utils import get_latest_checkpoint, resolutions
-
+import torch.nn as nn
 
 def main(args):
+    # Validate resolutions.
     if args.res_out not in resolutions.keys():
         print(f"Resolution {args.res_out} not found in supported output resolutions.")
         exit(-1)
@@ -44,7 +47,7 @@ def main(args):
         device = torch.device("cpu")
     print(f"Running inference on device: {device}")
 
-    # Dynamically import the desired model module from models/{args.model}/model.py
+    # Dynamically import the desired model module from models/{args.model}/model.py.
     model_module = importlib.import_module(f"models.{args.model}.model")
     TransformerModel = model_module.TransformerModel
 
@@ -70,7 +73,7 @@ def main(args):
     print(f"Downscaled image saved to: {args.inp}")
     lr_tensor = lr_tensor.unsqueeze(0)  # add batch dimension
 
-    # Instantiate and optionally compile the model.
+    # Instantiate the model.
     model = TransformerModel().to(device)
 
     # Load checkpoint.
@@ -79,6 +82,7 @@ def main(args):
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.eval()
 
+    # Optionally compile the model.
     if args.compile:
         try:
             model = torch.compile(model)
@@ -86,29 +90,48 @@ def main(args):
         except Exception as e:
             print(f"torch.compile failed: {e}")
 
-    # Run inference under mixed precision).
-    with torch.autocast(device_type=device.type, dtype=torch.float16):
-        with torch.no_grad():
+    # Optionally quantize the model.
+    if args.quantize:
+        print("Applying dynamic quantization to the model...")
+        # Here we quantize all nn.Linear layers dynamically.
+        model = torch.quantization.quantize_dynamic(
+            model, {nn.Linear}, dtype=torch.qint8
+        )
+        print("Model quantization complete.")
+
+    # Run inference with mixed precision if applicable.
+    with torch.no_grad():
+        if device.type in ['cuda', 'mps']:
+            with torch.autocast(device_type=device.type, dtype=torch.float16):
+                output = model(lr_tensor.to(device), res_out)
+        else:
             output = model(lr_tensor.to(device), res_out)
     output = output.squeeze(0).cpu()
     upscaled_image = to_pil(output)
     upscaled_image.save(args.out)
     print(f"Upscaled image saved to: {args.out}")
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Inference script for Transformer upscaler with dynamic input resolution, Mixed Precision, and Model Selection")
-    parser.add_argument("--image_path", type=str, required=True, help="Path to the input image file")
+        description="Inference script for Transformer upscaler with dynamic input resolution, model quantization, and mixed precision"
+    )
+    parser.add_argument("--image_path", type=str, required=True,
+                        help="Path to the input image file")
     parser.add_argument("--model", type=str, default="ResidualTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
     parser.add_argument("--res_out", type=str, default='1080',
                         help="Output resolution key (e.g., '1080', '1440', '2160', etc.)")
-    parser.add_argument("--res_in", type=str, default=None, help="Input resolution key (None for no downscaling)")
-    parser.add_argument("--inp", type=str, default="input.png", help="Output file path for the downscaled input image")
-    parser.add_argument("--out", type=str, default="output.png", help="Output file path for the upscaled output image")
-    parser.add_argument("--compile", action="store_true", help="Enable model compilation with torch.compile")
+    parser.add_argument("--res_in", type=str, default=None,
+                        help="Input resolution key (None for no downscaling)")
+    parser.add_argument("--inp", type=str, default="input.png",
+                        help="Output file path for the downscaled input image")
+    parser.add_argument("--out", type=str, default="output.png",
+                        help="Output file path for the upscaled output image")
+    parser.add_argument("--compile", action="store_true",
+                        help="Enable model compilation with torch.compile")
+    parser.add_argument("--quantize", action="store_true",
+                        help="Enable dynamic quantization on the model to reduce footprint")
     args = parser.parse_args()
     main(args)
