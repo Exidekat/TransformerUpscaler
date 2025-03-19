@@ -7,7 +7,7 @@ using the highres_img_dataset_online. This enables AB testing across models by s
 the module path models/{args.model}/model.py) and automatically sets the checkpoint directory to
 models/{args.model}/checkpoints/ if not provided.
 """
-
+import asyncio
 import os
 import argparse
 import torch
@@ -127,7 +127,7 @@ if __name__ == "__main__":
                         help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-4,
                         help="Learning rate for optimizer")
-    parser.add_argument("--log_interval", type=int, default=10,
+    parser.add_argument("--log_interval", type=int, default=1,
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
@@ -135,6 +135,19 @@ if __name__ == "__main__":
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")
+    parser.add_argument("--traceback", action="store_true",
+                        help="Enable the Traceback Window")
 
     args = parser.parse_args()
-    main(args)
+
+    if args.traceback:
+        from tools.TracebackWindow import traceback_display
+
+        @traceback_display
+        def run():
+            asyncio.run(main(args))
+    else:
+        def run():
+            asyncio.run(main(args))
+
+    run()
