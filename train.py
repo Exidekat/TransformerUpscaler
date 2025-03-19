@@ -3,7 +3,7 @@
 train.py
 
 This script instantiates the TransformerModel from the specified model package and trains it on data loaded
-using the highres_img_dataset. This enables AB testing across models by specifying --model (which determines
+using the highres_img_dataset_online. This enables AB testing across models by specifying --model (which determines
 the module path models/{args.model}/model.py) and automatically sets the checkpoint directory to
 models/{args.model}/checkpoints/ if not provided.
 """
@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 import importlib
 
 # Import the dataset.
-from data_handling.data_class import highres_img_dataset
+from data_handling.data_class import highres_img_dataset_online, highres_img_dataset
 from tools.utils import get_latest_checkpoint
 
 
@@ -51,7 +51,10 @@ def main(args):
     print(f"Training on device: {device}")
 
     # Create dataset and DataLoader with custom collate function.
-    dataset = highres_img_dataset(args.data_dir)
+    if args.data_dir is None:
+        dataset = highres_img_dataset_online()
+    else:
+        dataset = highres_img_dataset(args.data_dir)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True,
                             num_workers=4, pin_memory=True, collate_fn=custom_collate_fn)
 
@@ -116,9 +119,9 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the TransformerModel for image upscaling")
-    parser.add_argument("--data_dir", type=str, required=True,
+    parser.add_argument("--data_dir", type=str, default=None,
                         help="Path to the directory containing training images (.jpg)")
-    parser.add_argument("--batch_size", type=int, default=12,
+    parser.add_argument("--batch_size", type=int, default=6,
                         help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=10,
                         help="Number of training epochs")
