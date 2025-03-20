@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 # Compile LaTeX source to PDF
 pdflatex architecture.tex
@@ -9,7 +10,7 @@ magick -density 300 architecture.pdf \
         architecture_temp.png
 
 # Adjust logo size
-magick logo.png -scale 500 logo_temp.png
+magick ../../resources/logo.png -scale 500 logo_temp.png
 
 
 # Append logo to the right side of the diagram

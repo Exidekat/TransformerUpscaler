@@ -1,8 +1,8 @@
 # TransformerUpscaler
 ### ML@SJSU
 
-## Model Architecture
-![Model Architecture](resources/architecture.png)
+## Residual Model Architecture
+![Model Architecture](models/ResidualTransformer/architecture.png)
 
 ## Train
 `python train.py --data_dir images/training_set`
@@ -20,13 +20,13 @@
   <tr>
     <td style="text-align:center;">
       <div style="text-align:center;">
-        <img src="resources/demo/input_1.png" alt="Low Resolution Image" style="width:400px;">
+        <img src="models/ResidualTransformer/demo/input_1.png" alt="Low Resolution Image" style="width:400px;">
         <p>Original</p>
       </div>
     </td>
     <td style="text-align:center;">
       <div style="text-align:center;">
-        <img src="resources/demo/output_1.png" alt="Upscaled Image" style="width:400px;">
+        <img src="models/ResidualTransformer/demo/output_1.png" alt="Upscaled Image" style="width:400px;">
         <p>Upscaled image</p>
       </div>
     </td>
@@ -34,13 +34,13 @@
   <tr>
     <td style="text-align:center;">
       <div style="text-align:center;">
-        <img src="resources/demo/input_2.png" alt="Low Resolution Image" style="width:400px;">
+        <img src="models/ResidualTransformer/demo/input_2.png" alt="Low Resolution Image" style="width:400px;">
         <p>Original</p>
       </div>
     </td>
     <td style="text-align:center;">
       <div style="text-align:center;">
-        <img src="resources/demo/output_2.png" alt="Upscaled Image" style="width:400px;">
+        <img src="models/ResidualTransformer/demo/output_2.png" alt="Upscaled Image" style="width:400px;">
         <p>Upscaled image</p>
       </div>
     </td>
