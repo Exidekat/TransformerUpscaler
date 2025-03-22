@@ -42,7 +42,8 @@ class highres_img_dataset(Dataset):
 
     def __len__(self):
         # Each image is used to generate all scale pairs.
-        return len(self.image_files) * len(self.scale_pairs)
+        # return len(self.image_files) * len(self.scale_pairs)
+        return 50
 
     def __getitem__(self, idx):
         num_pairs = len(self.scale_pairs)
@@ -83,13 +84,20 @@ class highres_img_dataset_online(Dataset):
     def __init__(self):
         super().__init__()
         self.cache = deque()  # Each item is a tuple (PIL.Image, used_count)
+        # self.scale_pairs = [
+        #     {"lr": (720, 1280), "hr": (1080, 1920)},
+        #     {"lr": (720, 1280), "hr": (1440, 2560)},
+        #     {"lr": (1080, 1920), "hr": (1440, 2560)},
+        #     {"lr": (720, 1280), "hr": (2160, 3840)},
+        #     {"lr": (1080, 1920), "hr": (2160, 3840)},
+        #     {"lr": (1440, 2560), "hr": (2160, 3840)}
+        # ]
+        
         self.scale_pairs = [
-            {"lr": (720, 1280), "hr": (1080, 1920)},
-            {"lr": (720, 1280), "hr": (1440, 2560)},
-            {"lr": (1080, 1920), "hr": (1440, 2560)},
-            {"lr": (720, 1280), "hr": (2160, 3840)},
-            {"lr": (1080, 1920), "hr": (2160, 3840)},
-            {"lr": (1440, 2560), "hr": (2160, 3840)}
+            {"lr": (100, 100), "hr": (150, 150)},
+            {"lr": (100, 100), "hr": (200, 200)},
+            {"lr": (100, 100), "hr": (133, 133)},
+            {"lr": (100, 100), "hr": (300, 300)},
         ]
         self.num_scale_pairs = len(self.scale_pairs)
         self.batch_download_count = 50  # Number of images to download per batch.
@@ -133,7 +141,7 @@ class highres_img_dataset_online(Dataset):
 
     def __len__(self):
         # Emulate an big online dataset.
-        return 1000
+        return 500
 
     def __getitem__(self, idx):
         # Wait until at least one image is available.

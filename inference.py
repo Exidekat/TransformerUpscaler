@@ -19,9 +19,16 @@ import argparse
 import importlib
 import torch
 from PIL import Image
+from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import peak_signal_noise_ratio as psnr
+from skimage import img_as_float, io   
+from skimage.transform import resize
 import torchvision.transforms as transforms
 from tools.utils import get_latest_checkpoint, resolutions
 import torch.nn as nn
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 def main(args):
     # Validate resolutions.
@@ -74,7 +81,7 @@ def main(args):
     lr_tensor = lr_tensor.unsqueeze(0)  # add batch dimension
 
     # Instantiate the model.
-    model = TransformerModel().to(device)
+    model = TransformerModel(num_window_blocks=args.num_window_blocks).to(device)
 
     # Load checkpoint.
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
@@ -110,6 +117,23 @@ def main(args):
     upscaled_image = to_pil(output)
     upscaled_image.save(args.out)
     print(f"Upscaled image saved to: {args.out}")
+    
+    # Calculate SSIM and PSNR.
+    original = img_as_float(io.imread(args.image_path))
+    pred = img_as_float(io.imread(args.out))
+    lowres = img_as_float(io.imread(args.inp))
+    lowres = resize(lowres, (original.shape[0], original.shape[1]))
+    
+    model_ssim_val = ssim(original, pred, data_range=1, channel_axis=-1)
+    model_psnr_val = psnr(original, pred, data_range=1)
+    
+    bicubic_ssim_val = ssim(original, lowres, data_range=1, channel_axis=-1)
+    bicubic_psnr_val = psnr(original, lowres, data_range=1)
+    
+    
+    
+    print(f"Bicubic Scores:\tSSIM: {bicubic_ssim_val:.4f}, PSNR: {bicubic_psnr_val:.2f} dB")
+    print(f"Model Scores:\tSSIM: {model_ssim_val:.4f}, PSNR: {model_psnr_val:.2f} dB")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -133,5 +157,7 @@ if __name__ == "__main__":
                         help="Enable model compilation with torch.compile")
     parser.add_argument("--quantize", action="store_true",
                         help="Enable dynamic quantization on the model to reduce footprint")
+    parser.add_argument("--num_window_blocks", type=int, default=8,
+                        help="Number of transformer blocks")
     args = parser.parse_args()
     main(args)

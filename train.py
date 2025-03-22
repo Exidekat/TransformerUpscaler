@@ -14,11 +14,15 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.cuda.amp import autocast, GradScaler
 import importlib
+import warnings
 
 # Import the dataset.
 from data_handling.data_class import highres_img_dataset_online, highres_img_dataset
 from tools.utils import get_latest_checkpoint
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 def custom_collate_fn(batch):
@@ -59,7 +63,7 @@ def main(args):
                             num_workers=4, pin_memory=True, collate_fn=custom_collate_fn)
 
     # Instantiate the model and move it to the device.
-    model = TransformerModel().to(device)
+    model = TransformerModel(num_window_blocks=args.num_window_blocks).to(device)
 
     # Try and load a checkpoint
     try:
@@ -78,31 +82,40 @@ def main(args):
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
+    scaler = GradScaler()
+
+    torch.cuda.empty_cache()
+
     model.train()
     for epoch in range(epochs_trained, epochs):
         running_loss = 0.0
         for batch_idx, (lr_list, hr_list) in enumerate(dataloader):
             optimizer.zero_grad()
             batch_losses = []
-            # Process each sample in the batch individually.
-            for lr_img, hr_img in zip(lr_list, hr_list):
-                # Add batch dimension (1, C, H, W)
-                lr_img = lr_img.unsqueeze(0).to(device)
-                hr_img = hr_img.unsqueeze(0).to(device)
-                # Determine target resolution from the HR image shape.
-                target_res = (hr_img.shape[2], hr_img.shape[3])
-                output = model(lr_img, res_out=target_res)
-                loss = criterion(output, hr_img)
-                batch_losses.append(loss)
-            # Average the loss over the batch.
-            batch_loss = sum(batch_losses) / len(batch_losses)
-            batch_loss.backward()
-            optimizer.step()
+            
+            with autocast():
+                # Process each sample in the batch individually.
+                for lr_img, hr_img in zip(lr_list, hr_list):
+                    # Add batch dimension (1, C, H, W)
+                    lr_img = lr_img.unsqueeze(0).to(device)
+                    hr_img = hr_img.unsqueeze(0).to(device)
+                    # Determine target resolution from the HR image shape.
+                    target_res = (hr_img.shape[2], hr_img.shape[3])
+                    output = model(lr_img, res_out=target_res)
+                    loss = criterion(output, hr_img)
+                    batch_losses.append(loss)
+                    
+                # Average the loss over the batch.
+                batch_loss = sum(batch_losses) / len(batch_losses)
+                
+            scaler.scale(batch_loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             running_loss += batch_loss.item()
             if batch_idx % args.log_interval == 0:
                 print(
-                    f"Epoch [{epoch + 1}/{args.epochs}] Step [{batch_idx + 1}/{len(dataloader)}] Loss: {batch_loss.item():.4f}")
+                    f"Epoch [{epoch + 1}/{args.epochs}] Step [{batch_idx + 1}/{len(dataloader)}] Loss: {batch_loss.item():.6f}")
 
         avg_loss = running_loss / len(dataloader)
         print(f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.4f}")
@@ -131,12 +144,14 @@ if __name__ == "__main__":
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
-    parser.add_argument("--model", type=str, default="ResidualTransformer",
+    parser.add_argument("--model", type=str, default="EfficientTransformer",    
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")
     parser.add_argument("--traceback", action="store_true",
                         help="Enable the Traceback Window")
+    parser.add_argument("--num_window_blocks", type=int, default=8,
+                        help="Number of transformer blocks")
 
     args = parser.parse_args()
 

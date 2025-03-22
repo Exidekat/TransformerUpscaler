@@ -23,7 +23,7 @@ import torchvision.transforms as transforms
 import time
 import argparse
 
-from model.TransformerModel import TransformerModel
+from models.HighFreqTransformer import EfficientTransformer
 from tools.utils import get_latest_checkpoint
 
 def main(args):
@@ -37,7 +37,7 @@ def main(args):
     print(f"Using device: {device}")
 
     # Instantiate model.
-    model = TransformerModel().to(device)
+    model = EfficientTransformer().to(device)
     if args.compile:
         try:
             model = torch.compile(model)

@@ -28,7 +28,7 @@ def main(args):
 
     # Dynamically import the desired model module from models/{args.model}/model.py
     model_module = importlib.import_module(f"models.{args.model}.model")
-    TransformerModel = model_module.TransformerModel
+    TransformerModel = model_module.TransformerModel()
 
     # Set default checkpoint directory if not provided.
     if args.checkpoint_dir is None:

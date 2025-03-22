@@ -25,8 +25,13 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+import warnings
+
+
 from data_handling.data_class import highres_img_dataset
 from tools.utils import get_latest_checkpoint
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Custom collate function returns a tuple of lists
 def custom_collate_fn(batch):
@@ -65,11 +70,11 @@ def main(args):
     print(f"Model B ({args.model_b}) checkpoint: {ckpt_b}")
 
     # Instantiate models and load weights.
-    model_a = TransformerModelA().to(device)
+    model_a = TransformerModelA(num_window_blocks=args.model_a_window_blocks).to(device)
     model_a.load_state_dict(torch.load(ckpt_a, map_location=device))
     model_a.eval()
 
-    model_b = TransformerModelB().to(device)
+    model_b = TransformerModelB(num_window_blocks=args.model_b_window_blocks).to(device)
     model_b.load_state_dict(torch.load(ckpt_b, map_location=device))
     model_b.eval()
 
@@ -115,8 +120,8 @@ def main(args):
     avg_loss_b = total_loss_b / processed_samples
 
     print("========================================")
-    print(f"Model A ({args.model_a}) Total Loss: {total_loss_a:.4f} | Average Loss: {avg_loss_a:.4f}")
-    print(f"Model B ({args.model_b}) Total Loss: {total_loss_b:.4f} | Average Loss: {avg_loss_b:.4f}")
+    print(f"Model A ({args.model_a}) Total Loss: {total_loss_a:.6f} | Average Loss: {avg_loss_a:.6f}")
+    print(f"Model B ({args.model_b}) Total Loss: {total_loss_b:.6f} | Average Loss: {avg_loss_b:.6f}")
     print("========================================")
 
 if __name__ == "__main__":
@@ -129,8 +134,12 @@ if __name__ == "__main__":
                         help="Log progress every N batches")
     parser.add_argument("--model_a", type=str, required=True,
                         help="Model A name (e.g., 'ResidualTransformer' or 'HierarchicalTransformer')")
+    parser.add_argument("--model_a_window_blocks", type=int, default=8,
+                        help="Number of window blocks for Model A")
     parser.add_argument("--model_b", type=str, required=True,
                         help="Model B name")
+    parser.add_argument("--model_b_window_blocks", type=int, default=8,
+                        help="Number of window blocks for Model B")
     parser.add_argument("--checkpoint_dir_a", type=str, default=None,
                         help="Checkpoint directory for model A (default: models/{model_a}/checkpoints/)")
     parser.add_argument("--checkpoint_dir_b", type=str, default=None,
