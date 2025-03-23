@@ -79,7 +79,7 @@ def main(args):
         epochs_trained = 0
 
     # Define loss function and optimizer.
-    criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scaler = GradScaler()
     
@@ -146,7 +146,7 @@ if __name__ == "__main__":
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
-    parser.add_argument("--model", type=str, default="HighFreqTransformer",    
+    parser.add_argument("--model", type=str, default="StrippedTransformer",    
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")

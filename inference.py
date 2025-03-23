@@ -139,9 +139,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Inference script for Transformer upscaler with dynamic input resolution, model quantization, and mixed precision"
     )
-    parser.add_argument("--image_path", type=str, required=True,
+    parser.add_argument("--image_path", type=str, default="images/training_set/image_10.jpg",
                         help="Path to the input image file")
-    parser.add_argument("--model", type=str, default="ResidualTransformer",
+    parser.add_argument("--model", type=str, default="StrippedTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
