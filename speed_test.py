@@ -10,9 +10,11 @@ import importlib
 import time
 import argparse
 import torch
+import warnings
 from data_handling.data_class import highres_img_dataset
 from tools.utils import get_latest_checkpoint
 
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 def main(args):
     # if no gpu available, use cpu. if on macos>=13.0, use mps
@@ -28,7 +30,7 @@ def main(args):
 
     # Dynamically import the desired model module from models/{args.model}/model.py
     model_module = importlib.import_module(f"models.{args.model}.model")
-    TransformerModel = model_module.TransformerModel()
+    TransformerModel = model_module.TransformerModel
 
     # Set default checkpoint directory if not provided.
     if args.checkpoint_dir is None:
@@ -57,7 +59,7 @@ def main(args):
         for idx, (lr_img, _) in enumerate(dataloader):
             lr_img = lr_img.to(device)
             start_time = time.time()
-            _ = model(lr_img)
+            _ = model(lr_img, (2160, 3840))
             end_time = time.time()
             inference_time = end_time - start_time
             total_inference_time += inference_time
@@ -75,7 +77,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Speed test for Transformer upscaler inference")
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Directory containing images for inference")
-    parser.add_argument("--model", type=str, default="EfficientTransformer",
+    parser.add_argument("--model", type=str, default="HighFreqTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
