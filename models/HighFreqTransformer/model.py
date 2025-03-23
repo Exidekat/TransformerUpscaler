@@ -24,7 +24,7 @@ A minor spatial mismatch (if dimensions are not divisible by the window size) is
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .utils import Updownblock
+from .utils import Updownblock, Upsampler, default_conv, BasicConv
 from typing import Tuple
 
 def window_partition(x: torch.Tensor, window_size: int) -> torch.Tensor:
@@ -174,24 +174,24 @@ class TransformerModel(nn.Module):
     """
     Transformer-based model for image upscaling using relative positional encoding.
 
-    Architecture:
-      1. CNN encoder extracts features from the low-resolution input.
-      2. Downsampling reduces spatial dimensions.
-      3. Patch embedding converts features to a grid of tokens.
-      4. Tokens are partitioned into non-overlapping windows.
-      5. Window transformer blocks process the tokens.
-      6. Windows are merged back into a token grid.
-      7. Patch unembedding reconstructs a feature map from tokens.
-      8. CNN decoder refines features to predict a residual image.
-      9. Global residual connection: The predicted residual is added to a bicubically upscaled input.
+    Architecture (high-level):
+      1. A shallow CNN encoder extracts initial features from the low-resolution input.
+      2. A residual upscaling path uses a learned upsampler to upscale features early.
+      3. High-frequency preserve blocks refine the mid-level features.
+      4. A downsampling step (stride=2) further reduces spatial dimensions.
+      5. Patch embedding (stride=8) converts the downsampled features into token grids.
+      6. Window transformer blocks operate locally on tokens within partitioned windows.
+      7. Patch unembedding reconstructs the feature map from tokens.
+      8. A CNN decoder predicts the residual image in high resolution.
+      9. A global residual connection adds the predicted residual to the earlier upscaled features.
     """
     def __init__(
         self,
         in_channels: int = 3,
         base_channels: int = 64,
-        transformer_dim: int = 128,
-        num_window_blocks: int = 8,
-        num_heads: int = 8,
+        transformer_dim: int = 144,
+        num_window_blocks: int = 6,
+        num_heads: int = 12,
         mlp_ratio: float = 4.0,
         dropout: float = 0.01,
         window_size: int = 8,
@@ -202,10 +202,20 @@ class TransformerModel(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         
+        # Upscale final transformer output to residual size.
+        self.up2x = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=4, stride=2, padding=1)
+        
         # High frequency preserve block: 3 layers
         self.encoder1 = Updownblock(base_channels)
         self.encoder2 = Updownblock(base_channels)
-        self.encoder3 = Updownblock(base_channels)
+        
+        # Residual upscale.
+        self.up1 = Upsampler(conv=default_conv, n_feats=base_channels)
+        self.up1_conv = BasicConv(base_channels, 3, 3, 1, 1)
+        
+        # Final Upscale. 
+        self.final_upscale = Upsampler(conv=default_conv, n_feats=3)
+        self.final_upscale_conv = default_conv(3, 3, 3)
 
         # Downsampling layer.
         self.downsample = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=2, padding=1)
@@ -227,7 +237,7 @@ class TransformerModel(nn.Module):
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (1080, 1920)) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (384, 384)) -> torch.Tensor:
         """
         Forward pass.
 
@@ -239,18 +249,26 @@ class TransformerModel(nn.Module):
             torch.Tensor: Upscaled image of shape (B, 3, target_H, target_W).
         """
         # Global residual: bicubic upscale of input.
-        upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
+        # upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
+        
+        
+        # Upscale factor.
+        upscale_factor = res_out[0] // x.shape[2]
 
         # Encoder.
         feat = self.relu(self.conv1(x))
         feat = self.relu(self.conv2(feat))
         
+        # Residual Upscale.
+        upscaled_input = self.up1(feat, upscale_factor)
+        upscaled_input = self.up1_conv(upscaled_input)
+        
+        # High frequency preserve block.
         hpb1 = self.encoder1(feat)
         hpb2 = self.encoder2(hpb1)
-        hpb3 = self.encoder3(hpb2)
 
         # Downsample features.
-        feat_down = self.downsample(hpb3)  # (B, base_channels, H_d, W_d)
+        feat_down = self.downsample(hpb2)  # (B, base_channels, H_d, W_d)
 
         # Patch embedding.
         tokens = self.patch_embed(feat_down)  # (B, transformer_dim, H_t, W_t)
@@ -303,7 +321,9 @@ class TransformerModel(nn.Module):
         residual = self.decoder_conv2(dec)
 
         # Upsample the predicted residual.
-        residual_up = F.interpolate(residual, size=res_out, mode='bicubic', align_corners=False)
+        residual = self.up2x(residual)
+        residual_up = self.final_upscale(residual, upscale_factor)
+        residual_up = self.final_upscale_conv(residual_up)
 
         # Final output.
         out = upscaled_input + residual_up
@@ -312,6 +332,6 @@ class TransformerModel(nn.Module):
 # Quick test.
 if __name__ == "__main__":
     model = TransformerModel()
-    dummy_input = torch.randn(1, 3, 720, 1280)
+    dummy_input = torch.randn(1, 3, 96, 96)
     output = model(dummy_input)
-    print("Output shape:", output.shape)  # Expected: (1, 3, 1080, 1920)
+    print("Output shape:", output.shape)  # Expected: (1, 3, 384, 384)

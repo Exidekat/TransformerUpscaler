@@ -63,7 +63,7 @@ def main(args):
                             num_workers=4, pin_memory=True, collate_fn=custom_collate_fn)
 
     # Instantiate the model and move it to the device.
-    model = TransformerModel(num_window_blocks=args.num_window_blocks).to(device)
+    model = TransformerModel().to(device)
 
     # Try and load a checkpoint
     try:
@@ -81,9 +81,8 @@ def main(args):
     # Define loss function and optimizer.
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-
     scaler = GradScaler()
-
+    
     torch.cuda.empty_cache()
 
     model.train()
@@ -105,20 +104,23 @@ def main(args):
                     loss = criterion(output, hr_img)
                     batch_losses.append(loss)
                     
-                # Average the loss over the batch.
+            # Average the loss over the batch.
                 batch_loss = sum(batch_losses) / len(batch_losses)
                 
-            scaler.scale(batch_loss).backward()
+                
+            scaler.scale(batch_loss).backward() 
             scaler.step(optimizer)
             scaler.update()
+
 
             running_loss += batch_loss.item()
             if batch_idx % args.log_interval == 0:
                 print(
                     f"Epoch [{epoch + 1}/{args.epochs}] Step [{batch_idx + 1}/{len(dataloader)}] Loss: {batch_loss.item():.6f}")
+                
 
         avg_loss = running_loss / len(dataloader)
-        print(f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.4f}")
+        print(f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.6f}")
 
         # Save model checkpoint periodically.
         if (epoch + 1) % args.checkpoint_interval == 0:
@@ -144,14 +146,12 @@ if __name__ == "__main__":
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
-    parser.add_argument("--model", type=str, default="EfficientTransformer",    
+    parser.add_argument("--model", type=str, default="HighFreqTransformer",    
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")
     parser.add_argument("--traceback", action="store_true",
                         help="Enable the Traceback Window")
-    parser.add_argument("--num_window_blocks", type=int, default=8,
-                        help="Number of transformer blocks")
 
     args = parser.parse_args()
 

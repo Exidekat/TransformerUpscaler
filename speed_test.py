@@ -79,5 +79,6 @@ if __name__ == "__main__":
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
+    
     args = parser.parse_args()
     main(args)

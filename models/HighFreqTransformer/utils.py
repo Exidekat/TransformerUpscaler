@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 def default_conv(in_channels, out_channels, kernel_size, bias=True, groups = 1):
     wn = lambda x:torch.nn.utils.weight_norm(x)
@@ -130,3 +131,51 @@ class Updownblock(nn.Module):
         high1 = self.decoder_high(high)
         x4 = F.interpolate(x3, size = x.size()[-2:], mode='bilinear', align_corners=True)
         return self.alise(self.att(self.alise2(torch.cat([x4,high1],dim=1))))+ x
+
+
+class Upsampler(nn.Module):
+    """
+    Allows multiple (fixed) integer scale factors with sub-pixel convolution.
+    Build once in __init__, then choose the sub-module at forward time.
+    """
+    def __init__(self, conv, n_feats, valid_scales=(2, 3, 4), 
+                 bn=False, act=False, bias=True):
+        super(Upsampler, self).__init__()
+        self.upsamplers = nn.ModuleDict()
+        
+        for scale in valid_scales:
+            # Build a sequence of conv + pixelshuffle blocks for this 'scale'
+            blocks = []
+            if (scale & (scale - 1)) == 0:
+                # scale is a power of two (e.g. 2,4,8,...)
+                steps = int(math.log2(scale))
+                for _ in range(steps):
+                    blocks.append(conv(n_feats, 4 * n_feats, 3, bias))
+                    blocks.append(nn.PixelShuffle(2))
+                    if bn:
+                        blocks.append(nn.BatchNorm2d(n_feats))
+                    if act == 'relu':
+                        blocks.append(nn.ReLU(True))
+                    elif act == 'prelu':
+                        blocks.append(nn.PReLU(n_feats))
+            elif scale == 3:
+                blocks.append(conv(n_feats, 9 * n_feats, 3, bias))
+                blocks.append(nn.PixelShuffle(3))
+                if bn:
+                    blocks.append(nn.BatchNorm2d(n_feats))
+                if act == 'relu':
+                    blocks.append(nn.ReLU(True))
+                elif act == 'prelu':
+                    blocks.append(nn.PReLU(n_feats))
+            else:
+                raise NotImplementedError(f"Scale={scale} not supported")
+            
+            # Register as a sub-module keyed by the integer scale
+            self.upsamplers[str(scale)] = nn.Sequential(*blocks)
+
+    def forward(self, x, scale):
+        # scale should be one of the scales in valid_scales
+        scale_str = str(scale)
+        if scale_str not in self.upsamplers:
+            raise ValueError(f"Requested scale={scale} was not built.")
+        return self.upsamplers[scale_str](x)

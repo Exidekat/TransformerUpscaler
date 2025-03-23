@@ -81,7 +81,7 @@ def main(args):
     lr_tensor = lr_tensor.unsqueeze(0)  # add batch dimension
 
     # Instantiate the model.
-    model = TransformerModel(num_window_blocks=args.num_window_blocks).to(device)
+    model = TransformerModel().to(device)
 
     # Load checkpoint.
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
@@ -157,7 +157,5 @@ if __name__ == "__main__":
                         help="Enable model compilation with torch.compile")
     parser.add_argument("--quantize", action="store_true",
                         help="Enable dynamic quantization on the model to reduce footprint")
-    parser.add_argument("--num_window_blocks", type=int, default=8,
-                        help="Number of transformer blocks")
     args = parser.parse_args()
     main(args)
