@@ -226,73 +226,79 @@ class TransformerModel(nn.Module):
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (384, 384)) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, upscale_factor: int) -> torch.Tensor:
         """
         Forward pass.
 
         Args:
             x (torch.Tensor): Input tensor of shape (B, 3, H, W).
-            res_out (Tuple[int, int]): Target output resolution (height, width).
+            upscale_factor (int): Upscale factor for input image.
 
         Returns:
             torch.Tensor: Upscaled image of shape (B, 3, target_H, target_W).
         """
-        
-        # Upscale factor.
-        upscale_factor = res_out[0] // x.shape[2]
+        # Compute target resolution.
+        res_out = (x.shape[2] * upscale_factor, x.shape[3] * upscale_factor)
 
         # Encoder.
         feat = self.relu(self.conv1(x))
         feat = self.relu(self.conv2(feat))
+        B, C, H_feat, W_feat = feat.shape
 
-        # Residual upscale.
+        # --- Pad 'feat' so that its spatial dims are multiples of 8 ---
+        pad_h = (8 - H_feat % 8) % 8
+        pad_w = (8 - W_feat % 8) % 8
+        if pad_h or pad_w:
+            feat_pad = F.pad(feat, (0, pad_w, 0, pad_h), mode='reflect')
+        else:
+            feat_pad = feat
+
+        # Residual upscale branch (using the original feat).
         upscaled_input = self.up1(feat, upscale_factor)
-        upscaled_input = self.up1_conv(upscaled_input)  
+        upscaled_input = self.up1_conv(upscaled_input)
 
-        # Patch embedding.
-        tokens = self.patch_embed(feat)  # (B, transformer_dim, H_t, W_t)
-        B, C, H_t, W_t = tokens.shape
-        # Rearrange tokens to (B, H_t, W_t, transformer_dim)
-        tokens = tokens.permute(0, 2, 3, 1).contiguous()
+        # --- Patch embedding on padded feature map ---
+        tokens = self.patch_embed(feat_pad)  # (B, transformer_dim, H_t, W_t)
+        B, C_t, H_t, W_t = tokens.shape
+        tokens = tokens.permute(0, 2, 3, 1).contiguous()  # (B, H_t, W_t, transformer_dim)
 
-        # Pad token grid if necessary for window partitioning.
+        # Pad token grid for window partitioning.
         pad_bottom = (self.window_size - H_t % self.window_size) % self.window_size
-        pad_right = (self.window_size - W_t % self.window_size) % self.window_size
+        pad_right  = (self.window_size - W_t % self.window_size) % self.window_size
         orig_H, orig_W = H_t, W_t
-        if pad_bottom > 0 or pad_right > 0:
+        if pad_bottom or pad_right:
             tokens = tokens.permute(0, 3, 1, 2)  # (B, transformer_dim, H_t, W_t)
             tokens = F.pad(tokens, (0, pad_right, 0, pad_bottom))
-            tokens = tokens.permute(0, 2, 3, 1).contiguous()  # (B, H_pad, W_pad, transformer_dim)
+            tokens = tokens.permute(0, 2, 3, 1).contiguous()
             H_t, W_t = tokens.shape[1], tokens.shape[2]
 
         # Partition tokens into windows.
         tokens_windows = window_partition(tokens, self.window_size)  # (B, num_windows, window_size*window_size, transformer_dim)
-        B, num_windows, N, D = tokens_windows.shape
-        tokens_windows = tokens_windows.view(B * num_windows, N, D)
+        B_win, num_windows, N, D = tokens_windows.shape
+        tokens_windows = tokens_windows.view(B_win * num_windows, N, D)
 
         # Process windows with transformer blocks.
         for block in self.window_blocks:
             tokens_windows = block(tokens_windows)
 
         # Merge windows back to token grid.
-        tokens_windows = tokens_windows.view(B, num_windows, N, D)
+        tokens_windows = tokens_windows.view(B_win, num_windows, N, D)
         tokens = window_reverse(tokens_windows, self.window_size, H_t, W_t)  # (B, H_t, W_t, transformer_dim)
 
-        # Remove padding if added.
-        if pad_bottom > 0 or pad_right > 0:
+        # Remove padding added for window partitioning.
+        if pad_bottom or pad_right:
             tokens = tokens[:, :orig_H, :orig_W, :]
 
-        # Rearrange tokens back to (B, transformer_dim, H_t, W_t).
-        tokens = tokens.permute(0, 3, 1, 2).contiguous()
+        tokens = tokens.permute(0, 3, 1, 2).contiguous()  # (B, transformer_dim, H_t, W_t)
 
-        # Patch unembedding.
-        feat_trans = self.patch_unembed(tokens)  # (B, base_channels, H_d_un, W_d_un)
+        # --- Patch unembedding ---
+        feat_trans = self.patch_unembed(tokens)  # (B, base_channels, H_pad, W_pad)
 
-        # Crop features for skip connection compatibility.
-        min_h = min(feat.shape[2], feat.shape[2])
-        min_w = min(feat.shape[3], feat.shape[3])
-        feat = feat[:, :, :min_h, :min_w]
-        feat_trans = feat_trans[:, :, :min_h, :min_w]
+        # Crop feat_trans to remove the padding from before patch embedding.
+        feat_trans = feat_trans[:, :, :H_feat, :W_feat]
+
+        # Combine skip connection.
+        feat = feat[:, :, :H_feat, :W_feat]
         combined_feat = feat + feat_trans
 
         # Decoder.
@@ -301,7 +307,7 @@ class TransformerModel(nn.Module):
 
         # Upsample the predicted residual.
         residual_up = self.final_upscale(residual, upscale_factor)
-        residual_up = self.final_upscale_conv(residual_up)  
+        residual_up = self.final_upscale_conv(residual_up)
 
         # Final output.
         out = upscaled_input + residual_up
@@ -310,6 +316,6 @@ class TransformerModel(nn.Module):
 # Quick test.
 if __name__ == "__main__":
     model = TransformerModel()
-    dummy_input = torch.randn(1, 3, 96, 96)
-    output = model(dummy_input)
-    print("Output shape:", output.shape)  # Expected: (1, 3, 384, 384)
+    dummy_input = torch.randn(1, 3, 100, 100)
+    output = model(dummy_input, 6)
+    print("Output shape:", output.shape)  # Expected: (1, 3, 600, 600)

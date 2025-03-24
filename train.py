@@ -100,7 +100,8 @@ def main(args):
                     hr_img = hr_img.unsqueeze(0).to(device)
                     # Determine target resolution from the HR image shape.
                     target_res = (hr_img.shape[2], hr_img.shape[3])
-                    output = model(lr_img, res_out=target_res)
+                    upscale_factor = hr_img.shape[2] / lr_img.shape[2]
+                    output = model(lr_img, upscale_factor)
                     loss = criterion(output, hr_img)
                     batch_losses.append(loss)
                     

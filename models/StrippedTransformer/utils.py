@@ -41,7 +41,7 @@ class Upsampler(nn.Module):
     Allows multiple (fixed) integer scale factors with sub-pixel convolution.
     Build once in __init__, then choose the sub-module at forward time.
     """
-    def __init__(self, conv, n_feats, valid_scales=(2, 3, 4), 
+    def __init__(self, conv, n_feats, valid_scales=(2, 3, 4, 6), 
                  bn=False, act=False, bias=True):
         super(Upsampler, self).__init__()
         self.upsamplers = nn.ModuleDict()
@@ -64,6 +64,15 @@ class Upsampler(nn.Module):
             elif scale == 3:
                 blocks.append(conv(n_feats, 9 * n_feats, 3, bias))
                 blocks.append(nn.PixelShuffle(3))
+                if bn:
+                    blocks.append(nn.BatchNorm2d(n_feats))
+                if act == 'relu':
+                    blocks.append(nn.ReLU(True))
+                elif act == 'prelu':
+                    blocks.append(nn.PReLU(n_feats))
+            elif scale == 6:
+                blocks.append(conv(n_feats, 36 * n_feats, 3, bias))
+                blocks.append(nn.PixelShuffle(6))
                 if bn:
                     blocks.append(nn.BatchNorm2d(n_feats))
                 if act == 'relu':

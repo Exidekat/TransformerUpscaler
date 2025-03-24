@@ -96,7 +96,8 @@ class highres_img_dataset_online(Dataset):
         self.scale_pairs = [
             {"lr": (96, 96), "hr": (192, 192)},
             {"lr": (96, 96), "hr": (288, 288)},
-            {"lr": (96, 96), "hr": (384, 384)}
+            {"lr": (96, 96), "hr": (384, 384)},
+            {"lr": (96, 96), "hr": (576, 576)}
         ]
         self.num_scale_pairs = len(self.scale_pairs)
         self.batch_download_count = 50  # Number of images to download per batch.
