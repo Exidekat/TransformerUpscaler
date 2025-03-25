@@ -14,9 +14,10 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import GradScaler
 import importlib
 import warnings
+from contextlib import nullcontext  # Used as a no-op context manager
 
 # Import the dataset.
 from data_handling.data_class import highres_img_dataset_online, highres_img_dataset
@@ -45,14 +46,28 @@ def main(args):
     model_module = importlib.import_module(f"models.{args.model}.model")
     TransformerModel = model_module.TransformerModel
 
-    # Device selection: mps if available, else cuda, otherwise cpu.
-    if torch.backends.mps.is_built():
+    # Device selection: prefer mps if available, then cuda, otherwise cpu.
+    if torch.backends.mps.is_available():
         device = torch.device("mps")
-    elif torch.backends.cuda.is_built():
+    elif torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
     print(f"Training on device: {device}")
+
+    # Setup an autocast context manager.
+    # For CUDA, use torch.cuda.amp.autocast.
+    # For MPS, try to use torch.amp.autocast with device_type="mps" (if available),
+    # otherwise, use nullcontext to effectively disable autocasting.
+    if device.type == "cuda":
+        amp_autocast = torch.cuda.amp.autocast
+    elif device.type == "mps":
+        try:
+            amp_autocast = lambda: torch.amp.autocast(device_type="mps")
+        except Exception:
+            amp_autocast = nullcontext
+    else:
+        amp_autocast = nullcontext
 
     # Create dataset and DataLoader with custom collate function.
     if args.data_dir is None:
@@ -65,7 +80,7 @@ def main(args):
     # Instantiate the model and move it to the device.
     model = TransformerModel().to(device)
 
-    # Try and load a checkpoint
+    # Try and load a checkpoint.
     try:
         checkpoint_path, epochs_trained = get_latest_checkpoint(args.checkpoint_dir)
         print(f"Loading checkpoint: {checkpoint_path}")
@@ -82,7 +97,7 @@ def main(args):
     criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scaler = GradScaler()
-    
+
     torch.cuda.empty_cache()
 
     model.train()
@@ -91,34 +106,32 @@ def main(args):
         for batch_idx, (lr_list, hr_list) in enumerate(dataloader):
             optimizer.zero_grad()
             batch_losses = []
-            
-            with autocast():
+
+            # Use our conditional autocast context.
+            with amp_autocast():
                 # Process each sample in the batch individually.
                 for lr_img, hr_img in zip(lr_list, hr_list):
                     # Add batch dimension (1, C, H, W)
                     lr_img = lr_img.unsqueeze(0).to(device)
                     hr_img = hr_img.unsqueeze(0).to(device)
-                    # Determine target resolution from the HR image shape.
-                    target_res = (hr_img.shape[2], hr_img.shape[3])
-                    upscale_factor = hr_img.shape[2] / lr_img.shape[2]
+                    # Determine upscale factor (ensure it's an integer).
+                    upscale_factor = int(hr_img.shape[2] / lr_img.shape[2])
                     output = model(lr_img, upscale_factor)
                     loss = criterion(output, hr_img)
                     batch_losses.append(loss)
-                    
+
             # Average the loss over the batch.
-                batch_loss = sum(batch_losses) / len(batch_losses)
-                
-                
-            scaler.scale(batch_loss).backward() 
+            batch_loss = sum(batch_losses) / len(batch_losses)
+
+            scaler.scale(batch_loss).backward()
             scaler.step(optimizer)
             scaler.update()
-
 
             running_loss += batch_loss.item()
             if batch_idx % args.log_interval == 0:
                 print(
-                    f"Epoch [{epoch + 1}/{args.epochs}] Step [{batch_idx + 1}/{len(dataloader)}] Loss: {batch_loss.item():.6f}")
-                
+                    f"Epoch [{epoch + 1}/{args.epochs}] Step [{batch_idx + 1}/{len(dataloader)}] Loss: {batch_loss.item():.6f}"
+                )
 
         avg_loss = running_loss / len(dataloader)
         print(f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.6f}")
@@ -147,7 +160,7 @@ if __name__ == "__main__":
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
-    parser.add_argument("--model", type=str, default="StrippedTransformer",    
+    parser.add_argument("--model", type=str, default="StrippedTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")
@@ -165,5 +178,4 @@ if __name__ == "__main__":
     else:
         def run():
             asyncio.run(main(args))
-
     run()

@@ -50,7 +50,7 @@ class highres_img_dataset(Dataset):
     def __len__(self):
         # Each image is used to generate all scale pairs.
         # return len(self.image_files) * len(self.scale_pairs)
-        return 50
+        return 200
 
     def __getitem__(self, idx):
         num_pairs = len(self.scale_pairs)
