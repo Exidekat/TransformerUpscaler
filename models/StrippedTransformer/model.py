@@ -175,14 +175,14 @@ class TransformerModel(nn.Module):
 
     Architecture:
       1. CNN encoder extracts features from the low-resolution input.
-      2. Downsampling reduces spatial dimensions.
-      3. Patch embedding converts features to a grid of tokens.
-      4. Tokens are partitioned into non-overlapping windows.
-      5. Window transformer blocks process the tokens.
-      6. Windows are merged back into a token grid.
-      7. Patch unembedding reconstructs a feature map from tokens.
-      8. CNN decoder refines features to predict a residual image.
-      9. Global residual connection: The predicted residual is added to a bicubically upscaled input.
+      2. Patch embedding converts features to a grid of tokens.
+      3. Tokens are partitioned into non-overlapping windows.
+      4. Window transformer blocks process the tokens.
+      5. Windows are merged back into a token grid.
+      6. Patch unembedding reconstructs a feature map from tokens.
+      7. CNN + Pixel Shuffle operations upscale the feature map.
+      8. CNN + Pixel Shuffle operations create a residual from the input.
+      9. Global residual connection: The predicted residual is added to the upscaled input.
     """
     def __init__(
         self,

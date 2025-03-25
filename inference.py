@@ -12,7 +12,7 @@ Mixed precision inference is enabled on CUDA/MPS devices via torch.autocast.
 The resulting upscaled image is saved to disk.
 
 Usage:
-    python inference_quantized.py --image_path images/training_set/image_0.jpg --model EfficientTransformer --res_in 720 --scale 3 [--compile] [--quantize]
+    python inference.py --image_path images/training_set/image_0.jpg --model StrippedTransformer --res_in 720 --scale 3 [--compile] [--quantize]
 """
 
 import argparse
@@ -76,6 +76,13 @@ def main(args):
     downscaled_image = to_pil(lr_tensor)
     downscaled_image.save(args.inp)
     print(f"Downscaled image saved to: {args.inp}")
+    
+    # bicubic interpolation
+    bicubic_image = to_pil(lr_tensor)
+    bicubic_image = bicubic_image.resize((lr_tensor.shape[2] * args.scale, lr_tensor.shape[1] * args.scale), Image.BICUBIC) 
+    bicubic_image.save('bicubic.jpg')
+    print(f"Bicubic image saved to: bicubic.jpg")
+    
     lr_tensor = lr_tensor.unsqueeze(0)  # add batch dimension
 
     # Instantiate the model.
@@ -85,6 +92,7 @@ def main(args):
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f"Loading checkpoint: {checkpoint_path}")
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     model.eval()
 
     # Optionally compile the model.
@@ -119,6 +127,8 @@ def main(args):
     # Calculate SSIM and PSNR.
     original = img_as_float(io.imread(args.image_path))
     pred = img_as_float(io.imread(args.out))
+    if original.shape[0] != pred.shape[0] or original.shape[1] != pred.shape[1]:
+        original = resize(original, (pred.shape[0], pred.shape[1]))
     lowres = img_as_float(io.imread(args.inp))
     lowres = resize(lowres, (original.shape[0], original.shape[1]))
     
@@ -132,12 +142,13 @@ def main(args):
     
     print(f"Bicubic Scores:\tSSIM: {bicubic_ssim_val:.4f}, PSNR: {bicubic_psnr_val:.2f} dB")
     print(f"Model Scores:\tSSIM: {model_ssim_val:.4f}, PSNR: {model_psnr_val:.2f} dB")
+    print(f"Model has {n_params} trainable parameters")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Inference script for Transformer upscaler with dynamic input resolution, model quantization, and mixed precision"
     )
-    parser.add_argument("--image_path", type=str, default="images/training_set/image_10.jpg",
+    parser.add_argument("--image_path", type=str, default="images/training_set/image_100.jpg",
                         help="Path to the input image file")
     parser.add_argument("--model", type=str, default="StrippedTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
@@ -149,7 +160,7 @@ if __name__ == "__main__":
                         help="Input resolution key (None for no downscaling)")
     parser.add_argument("--inp", type=str, default="input.jpg",
                         help="Output file path for the downscaled input image")
-    parser.add_argument("--out", type=str, default="output.jpg",
+    parser.add_argument("--out", type=str, default="model.jpg",
                         help="Output file path for the upscaled output image")
     parser.add_argument("--compile", action="store_true",
                         help="Enable model compilation with torch.compile")

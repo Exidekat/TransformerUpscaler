@@ -24,11 +24,11 @@ import concurrent.futures
 class highres_img_dataset(Dataset):
     def __init__(self, image_dir):
         self.image_dir = image_dir
-        # Collect only .jpg files in the specified directory.
+        # Collect only .png files in the specified directory.
         self.image_files = [
             os.path.join(image_dir, file)
             for file in os.listdir(image_dir)
-            if file.lower().endswith('.jpg')
+            if file.lower().endswith('.png')
         ]
         # Predefined scale pairs.
         # self.scale_pairs = [

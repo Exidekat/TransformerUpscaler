@@ -1,48 +1,65 @@
-# TransformerUpscaler
-### ML@SJSU
+# Fast Transformer Upscaling
 
-## Residual Model Architecture
-![Model Architecture](models/ResidualTransformer/architecture.png)
+## Overview
 
-## Train
-`python train.py --data_dir images/training_set`
+We present a **Transformer-based Single Image Super-Resolution (SISR) model** that enhances low-resolution images using a hybrid **CNN-Transformer** architecture. By leveraging both **local feature extraction** and **global self-attention**, the model achieves high-quality image upscaling across multiple magnification factors (2, 3, 4, 6).
 
-## Inference (single image)
-`python inference.py --image_path images/training_set/image_0.jpg --out_res 1080`
+## Model Architecture
 
-## Results Comparison
+The model is structured as follows:
 
-<table>
-  <tr>
-    <th style="text-align:center;">Low Resolution Input (1280×720)</th>
-    <th style="text-align:center;">Upscaled Output (1920×1080)</th>
-  </tr>
-  <tr>
-    <td style="text-align:center;">
-      <div style="text-align:center;">
-        <img src="models/ResidualTransformer/demo/input_1.png" alt="Low Resolution Image" style="width:400px;">
-        <p>Original</p>
-      </div>
-    </td>
-    <td style="text-align:center;">
-      <div style="text-align:center;">
-        <img src="models/ResidualTransformer/demo/output_1.png" alt="Upscaled Image" style="width:400px;">
-        <p>Upscaled image</p>
-      </div>
-    </td>
-  </tr>
-  <tr>
-    <td style="text-align:center;">
-      <div style="text-align:center;">
-        <img src="models/ResidualTransformer/demo/input_2.png" alt="Low Resolution Image" style="width:400px;">
-        <p>Original</p>
-      </div>
-    </td>
-    <td style="text-align:center;">
-      <div style="text-align:center;">
-        <img src="models/ResidualTransformer/demo/output_2.png" alt="Upscaled Image" style="width:400px;">
-        <p>Upscaled image</p>
-      </div>
-    </td>
-  </tr>
-</table>
+1. **CNN Encoder**  
+   - Extracts local features from the low-resolution input.  
+   - Uses a shallow convolutional network with ReLU activations.  
+
+2. **Patch Embedding**  
+   - Converts feature maps into tokenized representations.  
+   - Organizes data into structured tokens suitable for Transformer processing.
+
+3. **Window-Based Transformer Processing**  
+   - The tokenized feature map is divided into **non-overlapping windows**.  
+   - A series of **Transformer blocks** process these windows independently.  
+   - Relative positional encoding helps retain spatial relationships.
+
+4. **Patch Unembedding**  
+   - Converts Transformer-processed tokens back into a feature map.  
+   - Reconstructs the intermediate representation before upscaling.
+
+5. **Residual Upscaling**  
+   - A parallel CNN-based branch upscales the image.  
+   - A second branch reconstructs a **low frequency residual**.  
+   - The final output is obtained by **adding the residual to the upscaled image**.
+
+6. **Pixel Shuffle Upsampling**  
+   - Uses **CNN layers and Pixel Shuffle operations** to refine high-resolution outputs.  
+
+## Image Comparisons
+
+The following examples showcase the model's upscaling performance on sample images.
+
+### **Example 1**
+| Original | 2× Upscale | 3× Upscale | 4× Upscale | 6× Upscale |
+|----------|-----------|-----------|-----------|-----------|
+| ![Original](resources/input_100.jpg) | ![2x](resources/2x_100.jpg) | ![3x](resources/3x_100.jpg) | ![4x](resources/4x_100.jpg) | ![6x](resources/6x_100.jpg) |
+
+### **Example 2**
+| Original | 2× Upscale | 3× Upscale | 4× Upscale | 6× Upscale |
+|----------|-----------|-----------|-----------|-----------|
+| ![Original](resources/input_105.jpg) | ![2x](resources/2x_105.jpg) | ![3x](resources/3x_105.jpg) | ![4x](resources/4x_105.jpg) | ![6x](resources/6x_105.jpg) |
+
+These examples highlight the model's ability to **preserve fine details** and **enhance resolution** while reducing artifacts.
+
+## Key Features
+
+- **Hybrid CNN-Transformer Approach**  
+  - Uses **CNNs for local feature extraction** and **Transformers for global attention**.  
+
+- **Window-Based Processing for Efficiency**  
+  - Reduces complexity while maintaining context-awareness through **non-overlapping windows**.
+
+- **Multi-Scale Upscaling**  
+  - Supports **multiple magnification levels** (2×, 3×, 4×, 6×) using a single model.
+
+- **Residual Learning for Detail Enhancement**  
+  - Uses a **residual connection** to allow the model to focus on learning high frequency details
+
