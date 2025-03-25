@@ -6,13 +6,13 @@ This script loads the latest model checkpoint from the specified checkpoint dire
 loads an input image, and performs upscaling using the specified TransformerModel.
 It supports model quantization to reduce the footprint and improve inference speed.
 The input image is first resized to the desired input resolution (specified by --res_in),
-and then the model produces a high resolution output (e.g., 1080×1920) as specified by --res_out.
+and then the model produces a high resolution output as specified by --scale (scale factor).
 Quantization is applied post-training dynamically to all nn.Linear layers.
 Mixed precision inference is enabled on CUDA/MPS devices via torch.autocast.
 The resulting upscaled image is saved to disk.
 
 Usage:
-    python inference_quantized.py --image_path images/training_set/image_0.jpg --model EfficientTransformer --res_in 720 --res_out 1080 [--compile] [--quantize]
+    python inference_quantized.py --image_path images/training_set/image_0.jpg --model EfficientTransformer --res_in 720 --scale 3 [--compile] [--quantize]
 """
 
 import argparse
@@ -32,8 +32,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 def main(args):
     # Validate resolutions.
-    if args.res_out not in resolutions.keys():
-        print(f"Resolution {args.res_out} not found in supported output resolutions.")
+    if args.scale not in [2, 3, 4, 6]:
+        print(f"Resolution {args.scale} not found in supported output resolutions.")
         exit(-1)
     if args.res_in:
         if args.res_in not in resolutions.keys():
@@ -42,8 +42,6 @@ def main(args):
         res_in = resolutions[args.res_in]  # dynamic input resolution
     else:
         res_in = None
-
-    res_out = resolutions[args.res_out]  # e.g., (1080, 1920)
 
     # Device selection.
     if torch.backends.mps.is_built():
@@ -110,9 +108,9 @@ def main(args):
     with torch.no_grad():
         if device.type in ['cuda', 'mps']:
             with torch.autocast(device_type=device.type, dtype=torch.float16):
-                output = model(lr_tensor.to(device), res_out)
+                output = model(lr_tensor.to(device), args.scale)
         else:
-            output = model(lr_tensor.to(device), res_out)
+            output = model(lr_tensor.to(device), args.scale)
     output = output.squeeze(0).cpu()
     upscaled_image = to_pil(output)
     upscaled_image.save(args.out)
@@ -145,13 +143,13 @@ if __name__ == "__main__":
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
-    parser.add_argument("--res_out", type=str, default='1080',
-                        help="Output resolution key (e.g., '1080', '1440', '2160', etc.)")
+    parser.add_argument("--scale", type=int, default=3,
+                        help="Output resolution scale (2, 3, 4, 6)")
     parser.add_argument("--res_in", type=str, default=None,
                         help="Input resolution key (None for no downscaling)")
-    parser.add_argument("--inp", type=str, default="input.png",
+    parser.add_argument("--inp", type=str, default="input.jpg",
                         help="Output file path for the downscaled input image")
-    parser.add_argument("--out", type=str, default="output.png",
+    parser.add_argument("--out", type=str, default="output.jpg",
                         help="Output file path for the upscaled output image")
     parser.add_argument("--compile", action="store_true",
                         help="Enable model compilation with torch.compile")
