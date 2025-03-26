@@ -19,6 +19,7 @@ This design is resolution-agnostic because the patch embedding and window operat
 handle arbitrary input sizes, and the global residual is computed via bicubic upsampling.
 A minor spatial mismatch (if dimensions are not divisible by the window size) is resolved via cropping.
 """
+import math
 
 import torch
 import torch.nn as nn
@@ -226,19 +227,23 @@ class TransformerModel(nn.Module):
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x: torch.Tensor, upscale_factor: int = 2) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (1080, 1920), upscale_factor: int = None) -> torch.Tensor:
         """
         Forward pass.
 
         Args:
             x (torch.Tensor): Input tensor of shape (B, 3, H, W).
-            upscale_factor (int): Upscale factor for input image.
+            res_out (Tuple[int, int]): Target output resolution (height, width).
+            upscale_factor (int): Upscale factor (optional, overrides 'res_out').
 
         Returns:
             torch.Tensor: Upscaled image of shape (B, 3, target_H, target_W).
         """
-        # Compute target resolution.
-        res_out = (x.shape[2] * upscale_factor, x.shape[3] * upscale_factor)
+        # Compute target upscale.
+        if upscale_factor is not None:
+            res_out = (x.shape[2] * upscale_factor, x.shape[3] * upscale_factor)
+        elif upscale_factor is None:
+            upscale_factor = math.ceil(max(res_out[0] / x.shape[2], res_out[1] / x.shape[3]))
 
         # Encoder.
         feat = self.relu(self.conv1(x))

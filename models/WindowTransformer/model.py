@@ -228,7 +228,7 @@ class TransformerModel(nn.Module):
         Args:
             x (torch.Tensor): Input tensor of shape (B, 3, H, W).
             res_out (Tuple[int, int]): Target output resolution (height, width).
-            upscale_factor (int): Upscale factor (optional)
+            upscale_factor (int): Upscale factor (optional, overrides 'res_out').
 
         Returns:
             torch.Tensor: Upscaled image of shape (B, 3, target_H, target_W).

@@ -24,6 +24,7 @@ import importlib
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
 
 import warnings
 
@@ -85,15 +86,22 @@ def main(args):
     total_loss_b = 0.0
     processed_samples = 0
 
+    # Option lr / hr resize transforms
+    if args.res_in is not None:
+        lr_transform = transforms.Resize(args.res_in)
+    if args.res_out is not None:
+        hr_transform = transforms.Resize(args.res_out)
+
+
     # Loop over dataset without gradients.
     with torch.no_grad():
         for batch_idx, (lr_list, hr_list) in enumerate(dataloader):
             for lr_img, hr_img in zip(lr_list, hr_list):
                 # Check resolution restrictions if provided.
                 if args.res_in is not None and lr_img.shape[1] != args.res_in:
-                    continue
+                    lr_img = lr_transform(lr_img)
                 if args.res_out is not None and hr_img.shape[1] != args.res_out:
-                    continue
+                    hr_img = hr_transform(hr_img)
 
                 # Move images to device and add batch dimension.
                 lr_img = lr_img.unsqueeze(0).to(device)
@@ -126,7 +134,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AB Test for Transformer Upscaler Models")
-    parser.add_argument("--data_dir", type=str, required=True,
+    parser.add_argument("--data_dir", type=str, default="images/training_set",
                         help="Directory containing images (.jpg)")
     parser.add_argument("--batch_size", type=int, default=1,
                         help="Batch size (number of samples per iteration)")

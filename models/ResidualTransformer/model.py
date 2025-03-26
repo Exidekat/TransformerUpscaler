@@ -121,7 +121,6 @@ class TransformerModel(nn.Module):
         if upscale_factor is not None:
             res_out = (x.shape[2] * upscale_factor, x.shape[3] * upscale_factor)
 
-
         # Compute a global residual: bicubic upscale of the input image.
         upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
 
