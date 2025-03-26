@@ -9,6 +9,7 @@ models/{args.model}/checkpoints/ if not provided.
 """
 import asyncio
 import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import argparse
 import torch
 import torch.optim as optim
@@ -114,9 +115,8 @@ def main(args):
                     # Add batch dimension (1, C, H, W)
                     lr_img = lr_img.unsqueeze(0).to(device)
                     hr_img = hr_img.unsqueeze(0).to(device)
-                    # Determine upscale factor (ensure it's an integer).
-                    upscale_factor = int(hr_img.shape[2] / lr_img.shape[2])
-                    output = model(lr_img, upscale_factor=upscale_factor)
+
+                    output = model(lr_img, res_out=(hr_img.shape[2], hr_img.shape[3]))
                     loss = criterion(output, hr_img)
                     batch_losses.append(loss)
 

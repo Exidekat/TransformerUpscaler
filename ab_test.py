@@ -19,6 +19,7 @@ Default checkpoint directories are assumed to be:
 """
 
 import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import argparse
 import importlib
 import torch
@@ -102,6 +103,10 @@ def main(args):
                     lr_img = lr_transform(lr_img)
                 if args.res_out is not None and hr_img.shape[1] != args.res_out:
                     hr_img = hr_transform(hr_img)
+
+                # Skip if the lr image is smaller than the hr in height or width
+                if (hr_img.shape[1] / lr_img.shape[1]) <= 1 or (hr_img.shape[2] / lr_img.shape[2]) <= 1:
+                    continue
 
                 # Move images to device and add batch dimension.
                 lr_img = lr_img.unsqueeze(0).to(device)

@@ -6,6 +6,8 @@ This script runs inference on all images in the specified --data_dir one at a ti
 total inference time (sum of per-image inference times) as well as the overall wall-clock
 time, then prints the average inference time per image.
 """
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import importlib
 import time
 import argparse

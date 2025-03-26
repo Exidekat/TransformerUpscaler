@@ -24,6 +24,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 from typing import Tuple
 from .utils import Upsampler, default_conv, BasicConv 
 
@@ -316,6 +317,12 @@ class TransformerModel(nn.Module):
 
         # Final output.
         out = upscaled_input + residual_up
+
+        # Downsize if the upscale factor over shoots the desired aspect ratio
+        if res_out != (out.shape[2], out.shape[2]):
+            hr_squash = transforms.Resize(res_out)
+            out = hr_squash(out)
+
         return torch.clamp(out, 0.0, 1.0)
 
 # Quick test.

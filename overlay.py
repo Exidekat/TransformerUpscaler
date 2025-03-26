@@ -13,7 +13,8 @@ Press "q" to exit the app.
 Usage:
     python overlay.py --top 100 --left 100 --width 1280 --height 720 --checkpoint_dir ./checkpoints [--compile]
 """
-
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import cv2
 import mss
 import numpy as np

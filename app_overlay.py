@@ -23,7 +23,8 @@ Refinements implemented in this version:
   - Reduced frequency of non‑essential operations (cv2.moveWindow is updated every 50 iterations).
   - Parallelization of pre‑processing via a ThreadPoolExecutor.
 """
-
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import importlib
 import cv2
 import numpy as np

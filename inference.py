@@ -14,7 +14,8 @@ The resulting upscaled image is saved to disk.
 Usage:
     python inference.py --image_path images/training_set/image_0.jpg --model StrippedTransformer --res_in 720 --scale 3 [--compile] [--quantize]
 """
-
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import argparse
 import importlib
 import torch
@@ -45,7 +46,7 @@ def main(args):
 
     # Device selection.
     if torch.backends.mps.is_built():
-        device = torch.device("cpu")
+        device = torch.device("mps")
     elif torch.backends.cuda.is_built():
         device = torch.device("cuda")
     else:
@@ -114,7 +115,7 @@ def main(args):
 
     # Run inference with mixed precision if applicable.
     with torch.no_grad():
-        if device.type in ['cuda', 'mps']:  # adding mps soon
+        if device.type in ['cuda', 'mps']:
             with torch.autocast(device_type=device.type, dtype=torch.float16):
                 output = model(lr_tensor.to(device), upscale_factor=args.scale)
         else:
