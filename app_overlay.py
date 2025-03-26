@@ -365,13 +365,13 @@ def main(args):
                 if use_amp:
                     if gpu_stream is not None:
                         with torch.cuda.stream(gpu_stream), torch.autocast(device_type=device.type, dtype=torch.float16):
-                            upscaled = model(lr_tensor, res_out)
+                            upscaled = model(lr_tensor, res_out=res_out)
                         torch.cuda.current_stream().wait_stream(gpu_stream)
                     else:
                         with torch.autocast(device_type=device.type, dtype=torch.float16):
-                            upscaled = model(lr_tensor, res_out)
+                            upscaled = model(lr_tensor, res_out=res_out)
                 else:
-                    upscaled = model(lr_tensor, res_out)
+                    upscaled = model(lr_tensor, res_out=res_out)
             t1 = time.time()
             timings["inference"] += (t1 - t0)
 

@@ -221,17 +221,22 @@ class TransformerModel(nn.Module):
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (1080, 1920)) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (1080, 1920), upscale_factor: int = None) -> torch.Tensor:
         """
         Forward pass.
 
         Args:
             x (torch.Tensor): Input tensor of shape (B, 3, H, W).
             res_out (Tuple[int, int]): Target output resolution (height, width).
+            upscale_factor (int): Upscale factor (optional)
 
         Returns:
             torch.Tensor: Upscaled image of shape (B, 3, target_H, target_W).
         """
+        # Compute target resolution.
+        if upscale_factor is not None:
+            res_out = (x.shape[2] * upscale_factor, x.shape[3] * upscale_factor)
+
         # Global residual: bicubic upscale of input.
         upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
 

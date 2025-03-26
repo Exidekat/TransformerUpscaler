@@ -74,7 +74,7 @@ def main(args):
         lr_img = lr_transform(pil_img).unsqueeze(0).to(device)
 
         with torch.no_grad():
-            upscaled = model(lr_img)  # Expected shape: (1, 3, 1080, 1920)
+            upscaled = model(lr_img, res_out=(1080, 1920))  # Expected shape: (1, 3, 1080, 1920)
         upscaled = upscaled.squeeze(0).cpu()
         upscaled_pil = to_pil(upscaled)
         upscaled_np = np.array(upscaled_pil)

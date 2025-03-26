@@ -59,7 +59,7 @@ def main(args):
         for idx, (lr_img, _) in enumerate(dataloader):
             lr_img = lr_img.to(device)
             start_time = time.time()
-            _ = model(lr_img, (2160, 3840))
+            _ = model(lr_img, res_out=(2160, 3840))
             end_time = time.time()
             inference_time = end_time - start_time
             total_inference_time += inference_time

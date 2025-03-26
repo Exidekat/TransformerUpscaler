@@ -45,7 +45,7 @@ def main(args):
 
     # Device selection.
     if torch.backends.mps.is_built():
-        device = torch.device("mps")
+        device = torch.device("cpu")
     elif torch.backends.cuda.is_built():
         device = torch.device("cuda")
     else:
@@ -114,11 +114,11 @@ def main(args):
 
     # Run inference with mixed precision if applicable.
     with torch.no_grad():
-        if device.type in ['cuda', 'mps']:
+        if device.type in ['cuda', 'mps']:  # adding mps soon
             with torch.autocast(device_type=device.type, dtype=torch.float16):
-                output = model(lr_tensor.to(device), args.scale)
+                output = model(lr_tensor.to(device), upscale_factor=args.scale)
         else:
-            output = model(lr_tensor.to(device), args.scale)
+            output = model(lr_tensor.to(device), upscale_factor=args.scale)
     output = output.squeeze(0).cpu()
     upscaled_image = to_pil(output)
     upscaled_image.save(args.out)
@@ -150,7 +150,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--image_path", type=str, default="images/training_set/image_100.jpg",
                         help="Path to the input image file")
-    parser.add_argument("--model", type=str, default="StrippedTransformer",
+    parser.add_argument("--model", type=str, default="FastTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")

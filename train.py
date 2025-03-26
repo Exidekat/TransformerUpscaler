@@ -116,7 +116,7 @@ def main(args):
                     hr_img = hr_img.unsqueeze(0).to(device)
                     # Determine upscale factor (ensure it's an integer).
                     upscale_factor = int(hr_img.shape[2] / lr_img.shape[2])
-                    output = model(lr_img, upscale_factor)
+                    output = model(lr_img, upscale_factor=upscale_factor)
                     loss = criterion(output, hr_img)
                     batch_losses.append(loss)
 
