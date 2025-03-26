@@ -40,12 +40,12 @@ The following examples showcase the model's upscaling performance on sample imag
 ### **Example 1**
 | Original | 2× Upscale | 3× Upscale | 4× Upscale | 6× Upscale |
 |----------|-----------|-----------|-----------|-----------|
-| ![Original](resources/input_100.jpg) | ![2x](resources/2x_100.jpg) | ![3x](resources/3x_100.jpg) | ![4x](resources/4x_100.jpg) | ![6x](resources/6x_100.jpg) |
+| ![Original](models/FastTransformer/demo/input_100.jpg) | ![2x](models/FastTransformer/demo/2x_100.jpg) | ![3x](models/FastTransformer/demo/3x_100.jpg) | ![4x](models/FastTransformer/demo/4x_100.jpg) | ![6x](models/FastTransformer/demo/6x_100.jpg) |
 
 ### **Example 2**
 | Original | 2× Upscale | 3× Upscale | 4× Upscale | 6× Upscale |
 |----------|-----------|-----------|-----------|-----------|
-| ![Original](resources/input_105.jpg) | ![2x](resources/2x_105.jpg) | ![3x](resources/3x_105.jpg) | ![4x](resources/4x_105.jpg) | ![6x](resources/6x_105.jpg) |
+| ![Original](models/FastTransformer/demo/input_105.jpg) | ![2x](models/FastTransformer/demo/2x_105.jpg) | ![3x](models/FastTransformer/demo/3x_105.jpg) | ![4x](models/FastTransformer/demo/4x_105.jpg) | ![6x](models/FastTransformer/demo/6x_105.jpg) |
 
 These examples highlight the model's ability to **preserve fine details** and **enhance resolution** while reducing artifacts.
 
