@@ -7,15 +7,17 @@ using the highres_img_dataset_online. This enables AB testing across models by s
 the module path models/{args.model}/model.py) and automatically sets the checkpoint directory to
 models/{args.model}/checkpoints/ if not provided.
 """
-import asyncio
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
+
+import asyncio
 import argparse
 import torch
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
+from torchvision.transforms import transforms
 import importlib
 import warnings
 from contextlib import nullcontext  # Used as a no-op context manager
@@ -94,6 +96,9 @@ def main(args):
         print(f"Failed to load checkpoint: {e}")
         epochs_trained = 0
 
+    # Import resizing transforms, for downsizing upscaled outputs
+    resize_transforms = {}
+
     # Define loss function and optimizer.
     criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -116,7 +121,14 @@ def main(args):
                     lr_img = lr_img.unsqueeze(0).to(device)
                     hr_img = hr_img.unsqueeze(0).to(device)
 
-                    output = model(lr_img, res_out=(hr_img.shape[2], hr_img.shape[3]))
+                    output = model(lr_img, res_out=(hr_img.shape[2], hr_img.shape[3]), require_ratio=False)
+
+                    # in case the output isn't the right ratio yet, squash
+                    if (output.shape[2], output.shape[3]) != (hr_img.shape[2], hr_img.shape[3]):
+                        if (hr_img.shape[2], hr_img.shape[3]) not in resize_transforms.keys():
+                            resize_transforms[(hr_img.shape[2], hr_img.shape[3])] = transforms.Resize((hr_img.shape[2], hr_img.shape[3]))
+                        output = resize_transforms[(hr_img.shape[2], hr_img.shape[3])](output)
+
                     loss = criterion(output, hr_img)
                     batch_losses.append(loss)
 
@@ -171,6 +183,7 @@ if __name__ == "__main__":
 
     if args.traceback:
         from tools.TracebackWindow import traceback_display
+
 
         @traceback_display
         def run():

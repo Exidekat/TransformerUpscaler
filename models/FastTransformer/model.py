@@ -228,7 +228,7 @@ class TransformerModel(nn.Module):
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (1080, 1920), upscale_factor: int = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (1080, 1920), upscale_factor: int = None, require_ratio: bool = True) -> torch.Tensor:
         """
         Forward pass.
 
@@ -236,6 +236,7 @@ class TransformerModel(nn.Module):
             x (torch.Tensor): Input tensor of shape (B, 3, H, W).
             res_out (Tuple[int, int]): Target output resolution (height, width).
             upscale_factor (int): Upscale factor (optional, overrides 'res_out').
+            require_ratio (bool): whether to require that the upscaled image be resized down to the target resolution.
 
         Returns:
             torch.Tensor: Upscaled image of shape (B, 3, target_H, target_W).
@@ -319,7 +320,7 @@ class TransformerModel(nn.Module):
         out = upscaled_input + residual_up
 
         # Downsize if the upscale factor over shoots the desired aspect ratio
-        if res_out != (out.shape[2], out.shape[2]):
+        if require_ratio and res_out != (out.shape[2], out.shape[2]):
             hr_squash = transforms.Resize(res_out)
             out = hr_squash(out)
 
