@@ -19,14 +19,21 @@ Default checkpoint directories are assumed to be:
 """
 
 import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import argparse
 import importlib
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
+
+import warnings
+
 
 from data_handling.data_class import highres_img_dataset
 from tools.utils import get_latest_checkpoint
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Custom collate function returns a tuple of lists
 def custom_collate_fn(batch):
@@ -80,14 +87,25 @@ def main(args):
     total_loss_b = 0.0
     processed_samples = 0
 
+    # Option lr / hr resize transforms
+    if args.res_in is not None:
+        lr_transform = transforms.Resize(args.res_in)
+    if args.res_out is not None:
+        hr_transform = transforms.Resize(args.res_out)
+
+
     # Loop over dataset without gradients.
     with torch.no_grad():
         for batch_idx, (lr_list, hr_list) in enumerate(dataloader):
             for lr_img, hr_img in zip(lr_list, hr_list):
                 # Check resolution restrictions if provided.
                 if args.res_in is not None and lr_img.shape[1] != args.res_in:
-                    continue
+                    lr_img = lr_transform(lr_img)
                 if args.res_out is not None and hr_img.shape[1] != args.res_out:
+                    hr_img = hr_transform(hr_img)
+
+                # Skip if the lr image is smaller than the hr in height or width
+                if (hr_img.shape[1] / lr_img.shape[1]) <= 1 or (hr_img.shape[2] / lr_img.shape[2]) <= 1:
                     continue
 
                 # Move images to device and add batch dimension.
@@ -115,13 +133,13 @@ def main(args):
     avg_loss_b = total_loss_b / processed_samples
 
     print("========================================")
-    print(f"Model A ({args.model_a}) Total Loss: {total_loss_a:.4f} | Average Loss: {avg_loss_a:.4f}")
-    print(f"Model B ({args.model_b}) Total Loss: {total_loss_b:.4f} | Average Loss: {avg_loss_b:.4f}")
+    print(f"Model A ({args.model_a}) Total Loss: {total_loss_a:.6f} | Average Loss: {avg_loss_a:.6f}")
+    print(f"Model B ({args.model_b}) Total Loss: {total_loss_b:.6f} | Average Loss: {avg_loss_b:.6f}")
     print("========================================")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AB Test for Transformer Upscaler Models")
-    parser.add_argument("--data_dir", type=str, required=True,
+    parser.add_argument("--data_dir", type=str, default="images/training_set",
                         help="Directory containing images (.jpg)")
     parser.add_argument("--batch_size", type=int, default=1,
                         help="Batch size (number of samples per iteration)")

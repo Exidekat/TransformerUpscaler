@@ -12,6 +12,7 @@ This architecture incorporates:
 Input: Low resolution image (B, 3, 720, 1280)
 Output: Upscaled image (B, 3, 1080, 1920)
 """
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -110,12 +111,16 @@ class TransformerModel(nn.Module):
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
         self.decoder_conv2 = nn.Conv2d(base_channels, in_channels, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, x, res_out=(1080, 1920)):
+    def forward(self, x, res_out: Tuple[int, int] = (1080, 1920), upscale_factor: int = None, require_ratio: bool = True):
         """
         Forward pass:
           - x: Low resolution image of shape (B, 3, 720, 1280)
           - Returns: Upscaled image of shape (B, 3, 1080, 1920)
         """
+        # Compute target resolution.
+        if upscale_factor is not None:
+            res_out = (x.shape[2] * upscale_factor, x.shape[3] * upscale_factor)
+
         # Compute a global residual: bicubic upscale of the input image.
         upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
 

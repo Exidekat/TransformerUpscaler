@@ -6,13 +6,17 @@ This script runs inference on all images in the specified --data_dir one at a ti
 total inference time (sum of per-image inference times) as well as the overall wall-clock
 time, then prints the average inference time per image.
 """
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import importlib
 import time
 import argparse
 import torch
+import warnings
 from data_handling.data_class import highres_img_dataset
 from tools.utils import get_latest_checkpoint
 
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 def main(args):
     # if no gpu available, use cpu. if on macos>=13.0, use mps
@@ -57,7 +61,7 @@ def main(args):
         for idx, (lr_img, _) in enumerate(dataloader):
             lr_img = lr_img.to(device)
             start_time = time.time()
-            _ = model(lr_img)
+            _ = model(lr_img, res_out=(2160, 3840))
             end_time = time.time()
             inference_time = end_time - start_time
             total_inference_time += inference_time
@@ -75,9 +79,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Speed test for Transformer upscaler inference")
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Directory containing images for inference")
-    parser.add_argument("--model", type=str, default="EfficientTransformer",
+    parser.add_argument("--model", type=str, default="StrippedTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
+    
     args = parser.parse_args()
     main(args)

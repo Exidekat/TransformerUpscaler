@@ -23,7 +23,8 @@ Refinements implemented in this version:
   - Reduced frequency of non‑essential operations (cv2.moveWindow is updated every 50 iterations).
   - Parallelization of pre‑processing via a ThreadPoolExecutor.
 """
-
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import importlib
 import cv2
 import numpy as np
@@ -365,13 +366,13 @@ def main(args):
                 if use_amp:
                     if gpu_stream is not None:
                         with torch.cuda.stream(gpu_stream), torch.autocast(device_type=device.type, dtype=torch.float16):
-                            upscaled = model(lr_tensor, res_out)
+                            upscaled = model(lr_tensor, res_out=res_out)
                         torch.cuda.current_stream().wait_stream(gpu_stream)
                     else:
                         with torch.autocast(device_type=device.type, dtype=torch.float16):
-                            upscaled = model(lr_tensor, res_out)
+                            upscaled = model(lr_tensor, res_out=res_out)
                 else:
-                    upscaled = model(lr_tensor, res_out)
+                    upscaled = model(lr_tensor, res_out=res_out)
             t1 = time.time()
             timings["inference"] += (t1 - t0)
 

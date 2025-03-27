@@ -13,7 +13,8 @@ Press "q" to exit the app.
 Usage:
     python overlay.py --top 100 --left 100 --width 1280 --height 720 --checkpoint_dir ./checkpoints [--compile]
 """
-
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 import cv2
 import mss
 import numpy as np
@@ -23,7 +24,7 @@ import torchvision.transforms as transforms
 import time
 import argparse
 
-from model.TransformerModel import TransformerModel
+from models.HighFreqTransformer import EfficientTransformer
 from tools.utils import get_latest_checkpoint
 
 def main(args):
@@ -37,7 +38,7 @@ def main(args):
     print(f"Using device: {device}")
 
     # Instantiate model.
-    model = TransformerModel().to(device)
+    model = EfficientTransformer().to(device)
     if args.compile:
         try:
             model = torch.compile(model)
@@ -74,7 +75,7 @@ def main(args):
         lr_img = lr_transform(pil_img).unsqueeze(0).to(device)
 
         with torch.no_grad():
-            upscaled = model(lr_img)  # Expected shape: (1, 3, 1080, 1920)
+            upscaled = model(lr_img, res_out=(1080, 1920))  # Expected shape: (1, 3, 1080, 1920)
         upscaled = upscaled.squeeze(0).cpu()
         upscaled_pil = to_pil(upscaled)
         upscaled_np = np.array(upscaled_pil)
