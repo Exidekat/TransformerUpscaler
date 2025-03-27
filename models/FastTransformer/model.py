@@ -132,13 +132,54 @@ class WindowAttention(nn.Module):
         out = self.proj_drop(out)
         return out
 
-class WindowTransformerBlock(nn.Module):
+# class WindowTransformerBlock(nn.Module):
+#     """
+#     Transformer block operating on local windows with relative positional encoding.
+#     Consists of a window attention layer followed by an MLP with residual connections.
+#     """
+#     def __init__(self, dim: int, window_size: int, num_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.1):
+#         super(WindowTransformerBlock, self).__init__()
+#         self.norm1 = nn.LayerNorm(dim)
+#         self.attn = WindowAttention(dim, window_size, num_heads, dropout)
+#         self.norm2 = nn.LayerNorm(dim)
+#         hidden_dim = int(dim * mlp_ratio)
+#         self.mlp = nn.Sequential(
+#             nn.Linear(dim, hidden_dim),
+#             nn.GELU(),
+#             nn.Linear(hidden_dim, dim),
+#             nn.Dropout(dropout)
+#         )
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         """
+#         Forward pass.
+
+#         Args:
+#             x (torch.Tensor): Input tensor of shape (B, N, dim).
+
+#         Returns:
+#             torch.Tensor: Output tensor of shape (B, N, dim).
+#         """
+#         residual = x
+#         x = self.norm1(x)
+#         x = self.attn(x)
+#         x = residual + x
+
+#         residual = x
+#         x = self.norm2(x)
+#         x = self.mlp(x)
+#         x = residual + x
+#         return x
+
+class ShiftedWindowTransformerBlock(nn.Module):
     """
-    Transformer block operating on local windows with relative positional encoding.
-    Consists of a window attention layer followed by an MLP with residual connections.
+    A transformer block with shifted window attention.
     """
-    def __init__(self, dim: int, window_size: int, num_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.1):
-        super(WindowTransformerBlock, self).__init__()
+    def __init__(self, dim: int, window_size: int, num_heads: int,
+                 mlp_ratio: float = 4.0, dropout: float = 0.1):
+        super(ShiftedWindowTransformerBlock, self).__init__()
+        self.window_size = window_size
+        self.shift_size = window_size // 2
         self.norm1 = nn.LayerNorm(dim)
         self.attn = WindowAttention(dim, window_size, num_heads, dropout)
         self.norm2 = nn.LayerNorm(dim)
@@ -152,24 +193,46 @@ class WindowTransformerBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass.
-
         Args:
-            x (torch.Tensor): Input tensor of shape (B, N, dim).
-
+            x: Input tensor of shape (B, H, W, C)
         Returns:
-            torch.Tensor: Output tensor of shape (B, N, dim).
+            x: Output tensor of shape (B, H, W, C)
         """
-        residual = x
-        x = self.norm1(x)
-        x = self.attn(x)
-        x = residual + x
+        B, H, W, C = x.shape
+        shortcut = x
 
-        residual = x
-        x = self.norm2(x)
-        x = self.mlp(x)
-        x = residual + x
+        # Layer normalization.
+        x = self.norm1(x.view(B, -1, C)).view(B, H, W, C)
+
+        # Apply shift if needed.
+        if self.shift_size > 0:
+            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+        else:
+            shifted_x = x
+
+        # Partition windows.
+        windows = window_partition(shifted_x, self.window_size)  # (B, num_windows, window_size*window_size, C)
+        B_win, num_windows, N, _ = windows.shape
+        windows = windows.view(B_win * num_windows, N, C)
+
+        # Apply window-based attention.
+        attn_windows = self.attn(windows)
+        attn_windows = attn_windows.view(B_win, num_windows, N, C)
+
+        # Reverse window partition to get back to feature map.
+        shifted_x = window_reverse(attn_windows, self.window_size, H, W)
+
+        # Reverse the shift.
+        if self.shift_size > 0:
+            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+        else:
+            x = shifted_x
+
+        # Residual connection and MLP.
+        x = shortcut + x
+        x = x + self.mlp(self.norm2(x.view(B, -1, C)).view(B, H, W, C))
         return x
+
 
 class TransformerModel(nn.Module):
     """
@@ -190,11 +253,11 @@ class TransformerModel(nn.Module):
         self,
         in_channels: int = 3,
         base_channels: int = 64,
-        transformer_dim: int = 192,
+        transformer_dim: int = 160,
         num_window_blocks: int = 6,
-        num_heads: int = 12,
+        num_heads: int = 8,
         mlp_ratio: float = 4.0,
-        dropout: float = 0.1,
+        dropout: float = 0.15,
         window_size: int = 8,
     ):
         super(TransformerModel, self).__init__()
@@ -217,7 +280,7 @@ class TransformerModel(nn.Module):
         # Window transformer blocks.
         self.window_size = window_size
         self.window_blocks = nn.ModuleList([
-            WindowTransformerBlock(transformer_dim, window_size, num_heads, mlp_ratio, dropout)
+            ShiftedWindowTransformerBlock(transformer_dim, window_size, num_heads, mlp_ratio, dropout)
             for _ in range(num_window_blocks)
         ])
 
@@ -280,17 +343,17 @@ class TransformerModel(nn.Module):
             H_t, W_t = tokens.shape[1], tokens.shape[2]
 
         # Partition tokens into windows.
-        tokens_windows = window_partition(tokens, self.window_size)  # (B, num_windows, window_size*window_size, transformer_dim)
-        B_win, num_windows, N, D = tokens_windows.shape
-        tokens_windows = tokens_windows.view(B_win * num_windows, N, D)
+        # tokens_windows = window_partition(tokens, self.window_size)  # (B, num_windows, window_size*window_size, transformer_dim)
+        # B_win, num_windows, N, D = tokens_windows.shape
+        # tokens_windows = tokens_windows.view(B_win * num_windows, N, D)
 
         # Process windows with transformer blocks.
         for block in self.window_blocks:
-            tokens_windows = block(tokens_windows)
+            tokens = block(tokens)
 
         # Merge windows back to token grid.
-        tokens_windows = tokens_windows.view(B_win, num_windows, N, D)
-        tokens = window_reverse(tokens_windows, self.window_size, H_t, W_t)  # (B, H_t, W_t, transformer_dim)
+        # tokens_windows = tokens_windows.view(B_win, num_windows, N, D)
+        # tokens = window_reverse(tokens_windows, self.window_size, H_t, W_t)  # (B, H_t, W_t, transformer_dim)
 
         # Remove padding added for window partitioning.
         if pad_bottom or pad_right:
@@ -330,5 +393,5 @@ class TransformerModel(nn.Module):
 if __name__ == "__main__":
     model = TransformerModel()
     dummy_input = torch.randn(1, 3, 100, 100)
-    output = model(dummy_input, 6)
+    output = model(dummy_input, upscale_factor=6)
     print("Output shape:", output.shape)  # Expected: (1, 3, 600, 600)

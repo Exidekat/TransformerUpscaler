@@ -32,12 +32,12 @@ class highres_img_dataset(Dataset):
         ]
         # Predefined scale pairs.
         self.scale_pairs = [
-            {"lr": (720, 1280), "hr": (1080, 1920)},
-            {"lr": (720, 1280), "hr": (1440, 2560)},
-            {"lr": (1080, 1920), "hr": (1440, 2560)},
-            {"lr": (720, 1280), "hr": (2160, 3840)},
-            {"lr": (1080, 1920), "hr": (2160, 3840)},
-            {"lr": (1440, 2560), "hr": (2160, 3840)},
+            # {"lr": (720, 1280), "hr": (1080, 1920)},
+            # {"lr": (720, 1280), "hr": (1440, 2560)},
+            # {"lr": (1080, 1920), "hr": (1440, 2560)},
+            # {"lr": (720, 1280), "hr": (2160, 3840)},
+            # {"lr": (1080, 1920), "hr": (2160, 3840)},
+            # {"lr": (1440, 2560), "hr": (2160, 3840)},
             {"lr": (96, 96), "hr": (192, 192)},
             {"lr": (96, 96), "hr": (288, 288)},
             {"lr": (96, 96), "hr": (384, 384)},
@@ -59,16 +59,16 @@ class highres_img_dataset(Dataset):
 
         pair = self.scale_pairs[pair_idx]
         lr_transform = transforms.Compose([
-            transforms.Resize(pair["lr"]),
+            transforms.CenterCrop(pair["hr"]),
+            transforms.Resize(pair["lr"], interpolation=transforms.InterpolationMode.BICUBIC),
             transforms.ToTensor()
         ])
         hr_transform = transforms.Compose([
-            transforms.Resize(pair["hr"]),
+            transforms.CenterCrop(pair["hr"]),
             transforms.ToTensor()
         ])
-
-        lr_image_tensor = lr_transform(hr_image)
         hr_image_tensor = hr_transform(hr_image)
+        lr_image_tensor = lr_transform(hr_image)
 
         # Ensure image tensors are in [0,1]
         assert torch.min(lr_image_tensor) >= 0.0 and torch.max(lr_image_tensor) <= 1.0, "LR image tensor not in range [0, 1]"
@@ -90,12 +90,12 @@ class highres_img_dataset_online(Dataset):
         self.cache = deque()  # Each item is a tuple (PIL.Image, used_count)
         # Predefined scale pairs.
         self.scale_pairs = [
-            {"lr": (720, 1280), "hr": (1080, 1920)},
-            {"lr": (720, 1280), "hr": (1440, 2560)},
-            {"lr": (1080, 1920), "hr": (1440, 2560)},
-            {"lr": (720, 1280), "hr": (2160, 3840)},
-            {"lr": (1080, 1920), "hr": (2160, 3840)},
-            {"lr": (1440, 2560), "hr": (2160, 3840)},
+            # {"lr": (720, 1280), "hr": (1080, 1920)},
+            # {"lr": (720, 1280), "hr": (1440, 2560)},
+            # {"lr": (1080, 1920), "hr": (1440, 2560)},
+            # {"lr": (720, 1280), "hr": (2160, 3840)},
+            # {"lr": (1080, 1920), "hr": (2160, 3840)},
+            # {"lr": (1440, 2560), "hr": (2160, 3840)},
             {"lr": (96, 96), "hr": (192, 192)},
             {"lr": (96, 96), "hr": (288, 288)},
             {"lr": (96, 96), "hr": (384, 384)},
@@ -155,15 +155,16 @@ class highres_img_dataset_online(Dataset):
             time.sleep(0.05)
         pair = self.scale_pairs[used_count]
         lr_transform = transforms.Compose([
-            transforms.Resize(pair["lr"]),
+            transforms.CenterCrop(pair["hr"]),
+            transforms.Resize(pair["lr"], interpolation=transforms.InterpolationMode.BICUBIC),
             transforms.ToTensor()
         ])
         hr_transform = transforms.Compose([
-            transforms.Resize(pair["hr"]),
+            transforms.CenterCrop(pair["hr"]),
             transforms.ToTensor()
         ])
-        lr_image_tensor = lr_transform(img)
         hr_image_tensor = hr_transform(img)
+        lr_image_tensor = lr_transform(img)
         assert torch.min(lr_image_tensor) >= 0.0 and torch.max(lr_image_tensor) <= 1.0, "LR image tensor not in range [0,1]"
         assert torch.min(hr_image_tensor) >= 0.0 and torch.max(hr_image_tensor) <= 1.0, "HR image tensor not in range [0,1]"
         with self.download_lock:
@@ -205,5 +206,5 @@ class highres_img_dataset_online(Dataset):
 if __name__ == "__main__":
     dataset = highres_img_dataset_online()
     print("Online dataset length (simulated):", len(dataset))
-    lr, hr = dataset[0]
+    lr, hr = dataset[3]
     print("LR shape:", lr.shape, "HR shape:", hr.shape)

@@ -172,12 +172,12 @@ if __name__ == "__main__":
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
-    parser.add_argument("--model", type=str, default="StrippedTransformer",
+    parser.add_argument("--model", type=str, default="FastTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")
     parser.add_argument("--traceback", action="store_true",
-                        help="Enable the Traceback Window")
+                        help="Enable the Traceback Window") 
 
     args = parser.parse_args()
 
