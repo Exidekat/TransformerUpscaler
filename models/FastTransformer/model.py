@@ -257,8 +257,8 @@ class TransformerModel(nn.Module):
         num_window_blocks: int = 6,
         num_heads: int = 8,
         mlp_ratio: float = 4.0,
-        dropout: float = 0.15,
-        window_size: int = 8,
+        dropout: float = 0.1,
+        window_size: int = 9,
     ):
         super(TransformerModel, self).__init__()
         # Encoder: Shallow CNN.
