@@ -190,10 +190,10 @@ class TransformerModel(nn.Module):
         self,
         in_channels: int = 3,
         base_channels: int = 64,
-        transformer_dim: int = 192,
-        num_window_blocks: int = 6,
-        num_heads: int = 12,
-        mlp_ratio: float = 4.0,
+        transformer_dim: int = 128,
+        num_window_blocks: int = 5,
+        num_heads: int = 4,
+        mlp_ratio: float = 3.0,
         dropout: float = 0.1,
         window_size: int = 8,
     ):
@@ -223,6 +223,9 @@ class TransformerModel(nn.Module):
 
         # Patch unembedding: converts tokens back to a feature map.
         self.patch_unembed = nn.ConvTranspose2d(transformer_dim, base_channels, kernel_size=8, stride=8)
+        
+        self.sharpen_conv1 = nn.Conv2d(base_channels, base_channels, 3, 1, 1)
+        self.sharpen_conv2 = nn.Conv2d(base_channels, base_channels, 3, 1, 1)
 
         # Decoder: CNN layers to predict the residual image.
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
@@ -310,6 +313,12 @@ class TransformerModel(nn.Module):
 
         # Decoder.
         dec = self.relu(self.decoder_conv1(combined_feat))
+        dec_res = dec
+        dec = self.relu(self.sharpen_conv1(dec))
+        dec = self.sharpen_conv2(dec)
+        
+        dec = dec_res + dec
+        
         residual = self.decoder_conv2(dec)
 
         # Upsample the predicted residual.
