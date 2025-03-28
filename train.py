@@ -101,7 +101,7 @@ def main(args):
 
     # Define loss function and optimizer.
     criterion = nn.L1Loss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scaler = GradScaler()
 
     torch.cuda.empty_cache()

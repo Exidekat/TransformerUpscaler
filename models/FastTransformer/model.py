@@ -252,13 +252,13 @@ class TransformerModel(nn.Module):
     def __init__(
         self,
         in_channels: int = 3,
-        base_channels: int = 64,
-        transformer_dim: int = 160,
+        base_channels: int = 64, 
+        transformer_dim: int = 120,
         num_window_blocks: int = 6,
-        num_heads: int = 8,
-        mlp_ratio: float = 4.0,
+        num_heads: int = 6,
+        mlp_ratio: float = 3.0,
         dropout: float = 0.1,
-        window_size: int = 9,
+        window_size: int = 8,
     ):
         super(TransformerModel, self).__init__()
         # Encoder: Shallow CNN.
@@ -286,6 +286,10 @@ class TransformerModel(nn.Module):
 
         # Patch unembedding: converts tokens back to a feature map.
         self.patch_unembed = nn.ConvTranspose2d(transformer_dim, base_channels, kernel_size=8, stride=8)
+        
+        # Convolutional layers for local refining.
+        self.sharpen_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
+        self.sharpen_conv2 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
 
         # Decoder: CNN layers to predict the residual image.
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
@@ -342,18 +346,9 @@ class TransformerModel(nn.Module):
             tokens = tokens.permute(0, 2, 3, 1).contiguous()
             H_t, W_t = tokens.shape[1], tokens.shape[2]
 
-        # Partition tokens into windows.
-        # tokens_windows = window_partition(tokens, self.window_size)  # (B, num_windows, window_size*window_size, transformer_dim)
-        # B_win, num_windows, N, D = tokens_windows.shape
-        # tokens_windows = tokens_windows.view(B_win * num_windows, N, D)
-
         # Process windows with transformer blocks.
         for block in self.window_blocks:
             tokens = block(tokens)
-
-        # Merge windows back to token grid.
-        # tokens_windows = tokens_windows.view(B_win, num_windows, N, D)
-        # tokens = window_reverse(tokens_windows, self.window_size, H_t, W_t)  # (B, H_t, W_t, transformer_dim)
 
         # Remove padding added for window partitioning.
         if pad_bottom or pad_right:
@@ -373,6 +368,13 @@ class TransformerModel(nn.Module):
 
         # Decoder.
         dec = self.relu(self.decoder_conv1(combined_feat))
+        dec_1 = dec
+        
+        # Local sharpening.
+        dec = self.relu(self.sharpen_conv1(dec))
+        dec = self.sharpen_conv2(dec)
+        dec = dec + dec_1
+        
         residual = self.decoder_conv2(dec)
 
         # Upsample the predicted residual.
