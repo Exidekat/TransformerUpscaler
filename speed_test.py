@@ -42,7 +42,8 @@ def main(args):
     model = TransformerModel().to(device)
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f"Loading checkpoint from: {checkpoint_path}")
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
 
     # Create the dataset and dataloader (batch_size=1 for single image processing)
@@ -79,7 +80,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Speed test for Transformer upscaler inference")
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Directory containing images for inference")
-    parser.add_argument("--model", type=str, default="StrippedTransformer",
+    parser.add_argument("--model", type=str, default="FastTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")

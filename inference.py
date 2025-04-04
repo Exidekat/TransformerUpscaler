@@ -28,6 +28,7 @@ import torchvision.transforms as transforms
 from tools.utils import get_latest_checkpoint, resolutions
 import torch.nn as nn
 import warnings
+import time
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -91,8 +92,9 @@ def main(args):
 
     # Load checkpoint.
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
-    print(f"Loading checkpoint: {checkpoint_path}")
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    print(f'Loading checkpoint: {checkpoint_path}')
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     model.eval()
 
@@ -114,12 +116,19 @@ def main(args):
         print("Model quantization complete.")
 
     # Run inference with mixed precision if applicable.
+    inf_time = 0
     with torch.no_grad():
         if device.type in ['cuda', 'mps']:
             with torch.autocast(device_type=device.type, dtype=torch.float16):
+                start = time.time()
                 output = model(lr_tensor.to(device), upscale_factor=args.scale)
+                end = time.time()
+                inf_time = end - start
         else:
+            start = time.time()
             output = model(lr_tensor.to(device), upscale_factor=args.scale)
+            end = time.time()
+            inf_time = end - start
     output = output.squeeze(0).cpu()
     upscaled_image = to_pil(output)
     upscaled_image.save(args.out)
@@ -143,7 +152,7 @@ def main(args):
     
     print(f"Bicubic Scores:\tSSIM: {bicubic_ssim_val:.4f}, PSNR: {bicubic_psnr_val:.2f} dB")
     print(f"Model Scores:\tSSIM: {model_ssim_val:.4f}, PSNR: {model_psnr_val:.2f} dB")
-    print(f"Model has {n_params} trainable parameters")
+    print(f"Model has {n_params} trainable parameters, Inference time was {inf_time:.4f} seconds")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
