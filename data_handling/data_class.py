@@ -32,22 +32,17 @@ class highres_img_dataset(Dataset):
         ]
         # Predefined scale pairs.
         self.scale_pairs = [
-            # {"lr": (720, 1280), "hr": (1080, 1920)},
-            {"lr": (720, 1280), "hr": (1440, 2560)}
-            # {"lr": (1080, 1920), "hr": (1440, 2560)},
-            # {"lr": (720, 1280), "hr": (2160, 3840)},
-            # {"lr": (1080, 1920), "hr": (2160, 3840)},
-            # {"lr": (1440, 2560), "hr": (2160, 3840)},
-            # {"lr": (96, 96), "hr": (192, 192)},
-            # {"lr": (96, 96), "hr": (288, 288)},
-            # {"lr": (96, 96), "hr": (384, 384)},
-            # {"lr": (96, 96), "hr": (576, 576)}
+            {"lr": (96, 96), "hr": (192, 192)},
+            {"lr": (96, 96), "hr": (288, 288)},
+            {"lr": (96, 96), "hr": (384, 384)},
+            {"lr": (96, 96), "hr": (576, 576)}
+            # {"lr": (720, 1280), "hr": (2160, 3840)}
         ]
 
     def __len__(self):
         # Each image is used to generate all scale pairs.
-        # return len(self.image_files) * len(self.scale_pairs)
-        return 200
+        return len(self.image_files) * len(self.scale_pairs)
+        # return 10
 
     def __getitem__(self, idx):
         num_pairs = len(self.scale_pairs)
@@ -205,7 +200,19 @@ class highres_img_dataset_online(Dataset):
 
 # Quick test.
 if __name__ == "__main__":
-    dataset = highres_img_dataset_online()
+    dataset = highres_img_dataset('images/training_set')
     print("Online dataset length (simulated):", len(dataset))
-    lr, hr = dataset[0]
+    lr, hr = dataset[1]
+    lr, hr = dataset[1]
+    lr, hr = dataset[1]
+    lr, hr = dataset[1]
     print("LR shape:", lr.shape, "HR shape:", hr.shape)
+    
+    # Convert tensors to PIL images.
+    to_pil = transforms.ToPILImage()
+    hr_image = to_pil(hr)
+    lr_image = to_pil(lr)
+
+    # Display the images using PIL's show() method.
+    hr_image.show(title="High Resolution Image")
+    lr_image.show(title="Low Resolution Image")
