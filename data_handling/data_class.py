@@ -21,55 +21,106 @@ from torch.utils.data import Dataset
 import torch
 import concurrent.futures
 
+
 class highres_img_dataset(Dataset):
-    def __init__(self, image_dir):
+    def __init__(self, image_dir, scale_pair):
+        """
+        Initializes the dataset for a SPECIFIC scale pair.
+
+        Args:
+            image_dir (str): Path to the directory containing training images.
+            scale_pair (dict): A dictionary like {"lr": (H_lr, W_lr), "hr": (H_hr, W_hr)}.
+        """
         self.image_dir = image_dir
-        # Collect only .png files in the specified directory.
+        # Collect only .png files
         self.image_files = [
             os.path.join(image_dir, file)
             for file in os.listdir(image_dir)
             if file.lower().endswith('.png')
         ]
-        # Predefined scale pairs.
-        self.scale_pairs = [
-            {"lr": (96, 96), "hr": (192, 192)},
-            {"lr": (96, 96), "hr": (288, 288)},
-            {"lr": (96, 96), "hr": (384, 384)},
-            {"lr": (96, 96), "hr": (576, 576)}
-            # {"lr": (720, 1280), "hr": (2160, 3840)}
-        ]
+        if not self.image_files:
+             raise ValueError(f"No PNG images found in directory: {image_dir}")
+
+        # Store the single scale pair this dataset instance will handle
+        self.scale_pair = scale_pair
+
+        # Define transforms based on the specific scale_pair
+        self.lr_transform = transforms.Compose([
+            transforms.CenterCrop(self.scale_pair["hr"]),
+            transforms.Resize(self.scale_pair["lr"], interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.ToTensor()
+        ])
+        self.hr_transform = transforms.Compose([
+            transforms.CenterCrop(self.scale_pair["hr"]),
+            transforms.ToTensor()
+        ])
 
     def __len__(self):
-        # Each image is used to generate all scale pairs.
-        return len(self.image_files) * len(self.scale_pairs)
-        # return 10
+        # Length is now just the number of base images
+        return len(self.image_files)
+        # return 10 # Keep for debugging if needed
 
     def __getitem__(self, idx):
-        num_pairs = len(self.scale_pairs)
-        image_idx = idx // num_pairs
-        pair_idx = idx % num_pairs
-
-        img_path = self.image_files[image_idx]
+        img_path = self.image_files[idx]
         hr_image = Image.open(img_path).convert('RGB')
-
-        pair = self.scale_pairs[pair_idx]
-        lr_transform = transforms.Compose([
-            transforms.CenterCrop(pair["hr"]),
-            transforms.Resize(pair["lr"], interpolation=transforms.InterpolationMode.BICUBIC),
-            transforms.ToTensor()
-        ])
-        hr_transform = transforms.Compose([
-            transforms.CenterCrop(pair["hr"]),
-            transforms.ToTensor()
-        ])
-        hr_image_tensor = hr_transform(hr_image)
-        lr_image_tensor = lr_transform(hr_image)
+        hr_image_tensor = self.hr_transform(hr_image)
+        lr_image_tensor = self.lr_transform(hr_image)
 
         # Ensure image tensors are in [0,1]
-        assert torch.min(lr_image_tensor) >= 0.0 and torch.max(lr_image_tensor) <= 1.0, "LR image tensor not in range [0, 1]"
-        assert torch.min(hr_image_tensor) >= 0.0 and torch.max(hr_image_tensor) <= 1.0, "HR image tensor not in range [0, 1]"
+        # assert torch.min(lr_image_tensor) >= 0.0 and torch.max(lr_image_tensor) <= 1.0, f"LR tensor not in [0, 1] for {img_path}"
+        # assert torch.min(hr_image_tensor) >= 0.0 and torch.max(hr_image_tensor) <= 1.0, f"HR tensor not in [0, 1] for {img_path}"
 
         return lr_image_tensor, hr_image_tensor
+
+# class highres_img_dataset(Dataset):
+#     def __init__(self, image_dir):
+#         self.image_dir = image_dir
+#         # Collect only .png files in the specified directory.
+#         self.image_files = [
+#             os.path.join(image_dir, file)
+#             for file in os.listdir(image_dir)
+#             if file.lower().endswith('.png')
+#         ]
+#         # Predefined scale pairs.
+#         self.scale_pairs = [
+#             {"lr": (96, 96), "hr": (192, 192)},
+#             {"lr": (96, 96), "hr": (288, 288)},
+#             {"lr": (96, 96), "hr": (384, 384)},
+#             {"lr": (96, 96), "hr": (576, 576)}
+#             # {"lr": (720, 1280), "hr": (2160, 3840)}
+#         ]
+
+#     def __len__(self):
+#         # Each image is used to generate all scale pairs.
+#         return len(self.image_files) * len(self.scale_pairs)
+#         # return 10
+
+#     def __getitem__(self, idx):
+#         num_pairs = len(self.scale_pairs)
+#         image_idx = idx // num_pairs
+#         pair_idx = idx % num_pairs
+
+#         img_path = self.image_files[image_idx]
+#         hr_image = Image.open(img_path).convert('RGB')
+
+#         pair = self.scale_pairs[pair_idx]
+#         lr_transform = transforms.Compose([
+#             transforms.CenterCrop(pair["hr"]),
+#             transforms.Resize(pair["lr"], interpolation=transforms.InterpolationMode.BICUBIC),
+#             transforms.ToTensor()
+#         ])
+#         hr_transform = transforms.Compose([
+#             transforms.CenterCrop(pair["hr"]),
+#             transforms.ToTensor()
+#         ])
+#         hr_image_tensor = hr_transform(hr_image)
+#         lr_image_tensor = lr_transform(hr_image)
+
+#         # Ensure image tensors are in [0,1]
+#         assert torch.min(lr_image_tensor) >= 0.0 and torch.max(lr_image_tensor) <= 1.0, "LR image tensor not in range [0, 1]"
+#         assert torch.min(hr_image_tensor) >= 0.0 and torch.max(hr_image_tensor) <= 1.0, "HR image tensor not in range [0, 1]"
+
+#         return lr_image_tensor, hr_image_tensor
 
 class highres_img_dataset_online(Dataset):
     """

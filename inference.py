@@ -149,10 +149,11 @@ def main(args):
     bicubic_psnr_val = psnr(original, lowres, data_range=1)
     
     
-    
+    print('====================')
     print(f"Bicubic Scores:\tSSIM: {bicubic_ssim_val:.4f}, PSNR: {bicubic_psnr_val:.2f} dB")
     print(f"Model Scores:\tSSIM: {model_ssim_val:.4f}, PSNR: {model_psnr_val:.2f} dB")
     print(f"Model has {n_params} trainable parameters, Inference time was {inf_time:.4f} seconds")
+    print('====================')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -160,7 +161,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--image_path", type=str, default="images/training_set/image_100.jpg",
                         help="Path to the input image file")
-    parser.add_argument("--model", type=str, default="FastTransformer",
+    parser.add_argument("--model", type=str, default="Fastv2",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
