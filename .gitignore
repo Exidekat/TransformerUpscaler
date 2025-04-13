@@ -1,11 +1,11 @@
 # IDE Settings
 .idea/
+.vscode/
 
 # Cache
 __pycache__*
 .DS_Store
 
 # Produced images (default locations)
-bicubic.jpg
-input.jpg
-model.jpg
+*.jpg
+*.png
