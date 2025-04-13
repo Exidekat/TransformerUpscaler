@@ -1,11 +1,19 @@
 # IDE Settings
 .idea/
+.vscode/
 
 # Cache
 __pycache__*
 .DS_Store
 
 # Produced images (default locations)
-bicubic.jpg
-input.jpg
-model.jpg
+*.jpg
+
+# training images
+# images/training_set/*.png
+
+*.png
+!images/image_100.png   
+!images/u100_4hr.png
+!images/u100_12hr.png
+!images/u100_92hr.png
