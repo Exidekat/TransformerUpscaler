@@ -6,13 +6,14 @@ This script loads the latest model checkpoint from the specified checkpoint dire
 loads an input image, and performs upscaling using the specified TransformerModel.
 It supports model quantization to reduce the footprint and improve inference speed.
 The input image is first resized to the desired input resolution (specified by --res_in),
-and then the model produces a high resolution output as specified by --scale (scale factor).
+or, if --downscale is set, it is automatically downscaled by the scale factor.
+Then the model produces a high resolution output as specified by --scale.
 Quantization is applied post-training dynamically to all nn.Linear layers.
 Mixed precision inference is enabled on CUDA/MPS devices via torch.autocast.
 The resulting upscaled image is saved to disk.
 
 Usage:
-    python inference.py --image_path images/training_set/image_0.jpg --model StrippedTransformer --res_in 720 --scale 3 [--compile] [--quantize]
+    python inference.py --image_path images/training_set/image_0.jpg --model StrippedTransformer --res_in 720 --scale 3 [--compile] [--quantize] [--downscale]
 """
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
@@ -33,36 +34,29 @@ import time
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 def main(args):
-    # Validate resolutions.
+    # Validate scale factor.
     if args.scale not in [2, 3, 4, 6]:
-        print(f"Resolution {args.scale} not found in supported output resolutions.")
+        print(f"Scale factor {args.scale} not supported.")
         exit(-1)
-    if args.res_in:
+    
+    # Determine input resolution.
+    # If --downscale is set, ignore --res_in and compute resolution from the original image.
+    if args.downscale:
+        # Open image temporarily to get its dimensions.
+        temp_image = Image.open(args.image_path).convert('RGB')
+        orig_w, orig_h = temp_image.size  # PIL returns (width, height)
+        # Downscale input resolution: each dimension divided by the scale factor.
+        res_in = (orig_h // args.scale, orig_w // args.scale)
+        print(f"Downscale flag set: using computed downscaled resolution {res_in}")
+    elif args.res_in:
         if args.res_in not in resolutions.keys():
             print(f"Resolution {args.res_in} not found in supported input resolutions.")
             exit(-1)
-        res_in = resolutions[args.res_in]  # dynamic input resolution
+        res_in = resolutions[args.res_in]  # e.g. resolutions might be a dict mapping "720" -> (720, 1280) etc.
     else:
         res_in = None
 
-    # Device selection.
-    if torch.backends.mps.is_built():
-        device = torch.device("mps")
-    elif torch.backends.cuda.is_built():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-    print(f"Running inference on device: {device}")
-
-    # Dynamically import the desired model module from models/{args.model}/model.py.
-    model_module = importlib.import_module(f"models.{args.model}.model")
-    TransformerModel = model_module.TransformerModel
-
-    # Set default checkpoint directory if not provided.
-    if args.checkpoint_dir is None:
-        args.checkpoint_dir = f"models/{args.model}/checkpoints"
-
-    # Define transforms.
+    # Define transforms based on res_in.
     lr_transform = transforms.Compose([
         transforms.Resize(res_in),
         transforms.ToTensor()
@@ -74,26 +68,32 @@ def main(args):
     # Load input image and convert to RGB.
     image = Image.open(args.image_path).convert('RGB')
     lr_tensor = lr_transform(image)
-    # Optionally, save the downscaled input for inspection.
+    # Save the downscaled input for inspection.
     downscaled_image = to_pil(lr_tensor)
     downscaled_image.save(args.inp)
     print(f"Downscaled image saved to: {args.inp}")
     
-    # bicubic interpolation
+    # Bicubic interpolation baseline.
     bicubic_image = to_pil(lr_tensor)
-    bicubic_image = bicubic_image.resize((lr_tensor.shape[2] * args.scale, lr_tensor.shape[1] * args.scale), Image.BICUBIC) 
+    bicubic_image = bicubic_image.resize(
+        (lr_tensor.shape[2] * args.scale, lr_tensor.shape[1] * args.scale), Image.BICUBIC
+    )
     bicubic_image.save('bicubic.jpg')
     print(f"Bicubic image saved to: bicubic.jpg")
     
-    lr_tensor = lr_tensor.unsqueeze(0)  # add batch dimension
+    lr_tensor = lr_tensor.unsqueeze(0)  # Add batch dimension.
 
     # Instantiate the model.
-    model = TransformerModel().to(device)
+    model_module = importlib.import_module(f"models.{args.model}.model")
+    TransformerModel = model_module.TransformerModel
+    model = TransformerModel().to(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
     # Load checkpoint.
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = f"models/{args.model}/checkpoints"
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f'Loading checkpoint: {checkpoint_path}')
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
     model.load_state_dict(checkpoint['model_state_dict'])
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     model.eval()
@@ -106,16 +106,16 @@ def main(args):
         except Exception as e:
             print(f"torch.compile failed: {e}")
 
-    # Optionally quantize the model.
+    # Optionally apply dynamic quantization.
     if args.quantize:
         print("Applying dynamic quantization to the model...")
-        # Here we quantize all nn.Linear layers dynamically.
         model = torch.quantization.quantize_dynamic(
             model, {nn.Linear}, dtype=torch.qint8
         )
         print("Model quantization complete.")
 
-    # Run inference with mixed precision if applicable.
+    # Run inference with mixed precision if possible.
+    device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_built() else "cpu"))
     inf_time = 0
     with torch.no_grad():
         if device.type in ['cuda', 'mps']:
@@ -148,7 +148,6 @@ def main(args):
     bicubic_ssim_val = ssim(original, lowres, data_range=1, channel_axis=-1)
     bicubic_psnr_val = psnr(original, lowres, data_range=1)
     
-    
     print('====================')
     print(f"Bicubic Scores:\tSSIM: {bicubic_ssim_val:.4f}, PSNR: {bicubic_psnr_val:.2f} dB")
     print(f"Model Scores:\tSSIM: {model_ssim_val:.4f}, PSNR: {model_psnr_val:.2f} dB")
@@ -157,7 +156,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Inference script for Transformer upscaler with dynamic input resolution, model quantization, and mixed precision"
+        description="Inference script for Transformer upscaler with dynamic input resolution, quantization, and optional downscaling"
     )
     parser.add_argument("--image_path", type=str, default="images/training_set/image_100.jpg",
                         help="Path to the input image file")
@@ -166,9 +165,12 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
     parser.add_argument("--scale", type=int, default=3,
-                        help="Output resolution scale (2, 3, 4, 6)")
+                        help="Output upscale factor (e.g. 2, 3, 4, 6)")
     parser.add_argument("--res_in", type=str, default=None,
-                        help="Input resolution key (None for no downscaling)")
+                        help="Input resolution key (ignored if --downscale is set)")
+    parser.add_argument("--downscale", action="store_true",
+                        help="If set, downscale the input image with bicubic (using original dimensions divided by scale) "
+                             "and override --res_in.")
     parser.add_argument("--inp", type=str, default="input.jpg",
                         help="Output file path for the downscaled input image")
     parser.add_argument("--out", type=str, default="model.jpg",
