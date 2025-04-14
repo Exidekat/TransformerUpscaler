@@ -67,13 +67,22 @@ def main():
          
     model_module = importlib.import_module(f"models.{args.model}.model")
     TransformerModel = model_module.TransformerModel
-    model = TransformerModel().to(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print(f"Using device: {device}")
+    model = TransformerModel().to(device=device)
     
     if args.checkpoint_dir is None:
         args.checkpoint_dir = f"models/{args.model}/checkpoints"
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f'Loading checkpoint: {checkpoint_path}')
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     model.eval()
@@ -84,8 +93,8 @@ def main():
     alpha = 0.5
     attr_objective = attribution_objective(attr_grad, h, w, window=args.window_size)
     gaus_blur_path_func = GaussianBlurPath(sigma, fold, l)
-    interpolated_grad_numpy, result_numpy, interpolated_numpy = Path_gradient(tensor_lr.numpy(), model, attr_objective, 
-                                                                              gaus_blur_path_func, cuda=True, upscale_factor=args.scale)
+    interpolated_grad_numpy, result_numpy, interpolated_numpy = Path_gradient(tensor_lr.numpy(), model, attr_objective,
+                                                                              gaus_blur_path_func, upscale_factor=args.scale)
     grad_numpy, result = saliency_map_PG(interpolated_grad_numpy, result_numpy)
     abs_normed_grad_numpy = grad_abs_norm(grad_numpy)
     saliency_image_abs = vis_saliency(abs_normed_grad_numpy, zoomin=args.scale)
