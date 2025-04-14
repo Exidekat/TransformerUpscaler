@@ -8,6 +8,9 @@ the module path models/{args.model}/model.py) and automatically sets the checkpo
 models/{args.model}/checkpoints/ if not provided.
 """
 import os
+
+import numpy as np
+
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 
 import asyncio
@@ -165,73 +168,86 @@ def main(args):
 
         # Interleave batches from different scale factors (using cycled iterators)
         print(f"\n--- Starting Epoch {epoch + 1}/{epochs} ---")
-        for step in range(steps_per_epoch):
-            # Choose which scale factor to train on this step
-            # Simple round-robin:
-            current_factor = factors_to_train[step % len(factors_to_train)]
-            dataloader_iter = dataloader_iters[current_factor]
+        # Trace NaN anomalies
+        with torch.autograd.detect_anomaly():
+            for step in range(steps_per_epoch):
+                # Choose which scale factor to train on this step
+                # Simple round-robin:
+                current_factor = factors_to_train[step % len(factors_to_train)]
+                dataloader_iter = dataloader_iters[current_factor]
 
-            try:
-                lr_batch, hr_batch = next(dataloader_iter)
-            except StopIteration:
-                # Should not happen with itertools.cycle, but good practice
-                print(f"Warning: Dataloader for factor {current_factor} exhausted unexpectedly.")
-                continue # Or re-initialize: dataloader_iters[current_factor] = itertools.cycle(dataloaders[current_factor])
+                try:
+                    lr_batch, hr_batch = next(dataloader_iter)
+                except StopIteration:
+                    # Should not happen with itertools.cycle, but good practice
+                    print(f"Warning: Dataloader for factor {current_factor} exhausted unexpectedly.")
+                    continue # Or re-initialize: dataloader_iters[current_factor] = itertools.cycle(dataloaders[current_factor])
 
 
-            optimizer.zero_grad()
+                optimizer.zero_grad()
 
-            # Move the entire batch to the device
-            lr_batch = lr_batch.to(device, non_blocking=True)
-            hr_batch = hr_batch.to(device, non_blocking=True)
+                # Move the entire batch to the device
+                lr_batch = lr_batch.to(device, non_blocking=True)
+                hr_batch = hr_batch.to(device, non_blocking=True)
 
-            # Pass the scale factor to the model
-            target_h, target_w = hr_batch.shape[2], hr_batch.shape[3]
+                # Pass the scale factor to the model
+                target_h, target_w = hr_batch.shape[2], hr_batch.shape[3]
 
-            with amp_autocast():
-                 # Update model forward pass to accept upscale_factor
-                 # The model now needs to know which upsampling path to use
-                 output_batch = model(lr_batch, upscale_factor=current_factor, require_ratio=False) # Pass factor
+                with amp_autocast():
+                    # Update model forward pass to accept upscale_factor
+                    # The model now needs to know which upsampling path to use
 
-                 # Optional: Check if output size matches target (should if model handles factor correctly)
-                 if (output_batch.shape[2], output_batch.shape[3]) != (target_h, target_w):
-                      print(f"Warning: Output size {output_batch.shape[2:]} != target size {(target_h, target_w)} for factor {current_factor}. Resizing.")
-                      # This indicates an issue in the model's Upsampler or forward logic
-                      output_batch = transforms.functional.resize(output_batch, (target_h, target_w), antialias=True) # Use functional resize
 
-                #  loss = criterion(output_batch, hr_batch)
-                
-                 l1_loss = criterion_l1(output_batch, hr_batch)
-                
-                 with torch.no_grad():
-                     output_lpips = output_batch * 2.0 - 1.0 # Rescale to [-1, 1]
-                     target_lpips = hr_batch * 2.0 - 1.0   # Rescale to [-1, 1]
-                     perceptual_loss = lpips_loss(output_lpips, target_lpips).mean()
-                     
-                 loss = l1_loss + args.lpips_weight * perceptual_loss
+                    output_batch = model(lr_batch, upscale_factor=current_factor, require_ratio=False) # Pass factor
 
-            # Scale, Backward, Step
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+                    # Optional: Check if output size matches target (should if model handles factor correctly)
+                    if (output_batch.shape[2], output_batch.shape[3]) != (target_h, target_w):
+                        print(f"Warning: Output size {output_batch.shape[2:]} != target size {(target_h, target_w)} for factor {current_factor}. Resizing.")
+                        # This indicates an issue in the model's Upsampler or forward logic
+                        output_batch = transforms.functional.resize(output_batch, (target_h, target_w), antialias=True) # Use functional resize
 
-            current_loss = loss.item()
-            running_loss += current_loss
-            
-            l1_loss_value = l1_loss.item()
-            running_l1_loss += l1_loss_value
-            
-            perceptual_loss_value = perceptual_loss.item()
-            running_perceptual_loss += perceptual_loss_value
-            
-            global_step += 1
-            num_batches_processed_this_epoch += 1
+                    #  loss = criterion(output_batch, hr_batch)
 
-            if step % args.log_interval == 0:
-                 print(
-                    f"Epoch [{epoch + 1}/{args.epochs}] Step [{step + 1}/{steps_per_epoch}] Factor [x{current_factor}]\n\
-                    \tLoss: {current_loss:.6f}, L1 Loss: {l1_loss_value:.6f}, Perceptual Loss: {perceptual_loss_value:.6f}, LR: {optimizer.param_groups[0]['lr']:.6e}"
-                 )
+                    l1_loss = criterion_l1(output_batch, hr_batch)
+                    for name, param in model.named_parameters():
+                        if param.grad is not None and torch.isnan(param.grad).any():
+                            print(f"NaN detected in gradients of {name}")
+
+                    if torch.isnan(output_batch).any():
+                        print("NaN detected in model outputs!")
+                    if torch.isnan(hr_batch).any():
+                        print("NaN detected in ground truth images!")
+
+                    with torch.no_grad():
+                        output_lpips = output_batch * 2.0 - 1.0  # Rescale to [-1, 1]
+                        target_lpips = hr_batch * 2.0 - 1.0   # Rescale to [-1, 1]
+                        perceptual_loss = lpips_loss(output_lpips, target_lpips).mean()
+
+                    loss = l1_loss + args.lpips_weight * perceptual_loss
+
+                # Scale, Backward, Step
+                scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+
+                current_loss = loss.item()
+                running_loss += current_loss
+
+                l1_loss_value = l1_loss.item()
+                running_l1_loss += l1_loss_value
+
+                perceptual_loss_value = perceptual_loss.item()
+                running_perceptual_loss += perceptual_loss_value
+
+                global_step += 1
+                num_batches_processed_this_epoch += 1
+
+                if step % args.log_interval == 0:
+                     print(
+                        f"Epoch [{epoch + 1}/{args.epochs}] Step [{step + 1}/{steps_per_epoch}] Factor [x{current_factor}]\n\
+                        \tLoss: {current_loss:.6f}, L1 Loss: {l1_loss_value:.6f}, Perceptual Loss: {perceptual_loss_value:.6f}, LR: {optimizer.param_groups[0]['lr']:.6e}"
+                     )
 
         # -- End of Epoch --
         # Step the scheduler AFTER processing all batches for the epoch
@@ -258,6 +274,7 @@ def main(args):
 
 
     print("Training complete!")
+    return asyncio.sleep(1)
 
 
 if __name__ == "__main__":
@@ -274,7 +291,7 @@ if __name__ == "__main__":
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
-    parser.add_argument("--model", type=str, default="Fastv2",
+    parser.add_argument("--model", type=str, default="Fastv3",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")

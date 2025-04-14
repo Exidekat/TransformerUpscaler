@@ -92,15 +92,23 @@ def LinearPath(fold):
     return path_interpolation_func
 
 
-def Path_gradient(numpy_image, model, attr_objective, path_interpolation_func, cuda=False, upscale_factor=None):
+def Path_gradient(numpy_image, model, attr_objective, path_interpolation_func, upscale_factor=None):
     """
     Given a low-resolution image (as a NumPy array in C x H x W), computes:
       - The accumulated gradients along an interpolation path.
       - Model outputs along that path.
       - The interpolation images.
     """
-    if cuda:
-        model = model.cuda()
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    if str(device) in ["cuda", "mps"]:
+        model = model.to(device)
+
     # Convert low-res image (C,H,W) to (H,W,C) for the interpolation function.
     cv_numpy_image = np.moveaxis(numpy_image, 0, 2)
     image_interpolation, lambda_derivative_interpolation = path_interpolation_func(cv_numpy_image)
@@ -110,12 +118,12 @@ def Path_gradient(numpy_image, model, attr_objective, path_interpolation_func, c
     for i in range(image_interpolation.shape[0]):
         img_tensor = torch.from_numpy(image_interpolation[i])
         img_tensor.requires_grad_(True)
-        if cuda:
+        if str(device) in ["cuda", "mps"]:
             # Pass the upscale_factor explicitly to the model’s forward method.
             if upscale_factor is not None:
-                result = model(_add_batch_one(img_tensor).cuda(), upscale_factor=upscale_factor)
+                result = model(_add_batch_one(img_tensor).to(device), upscale_factor=upscale_factor)
             else:
-                result = model(_add_batch_one(img_tensor).cuda())
+                result = model(_add_batch_one(img_tensor).to(device))
             target = attr_objective(result)
             target.backward()
             grad = img_tensor.grad.cpu().numpy()
