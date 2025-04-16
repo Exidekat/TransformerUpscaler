@@ -8,10 +8,9 @@ the module path models/{args.model}/model.py) and automatically sets the checkpo
 models/{args.model}/checkpoints/ if not provided.
 """
 import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 
 import numpy as np
-
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 
 import asyncio
 import argparse
@@ -45,12 +44,14 @@ def get_warmup_cosine_scheduler(optimizer, warmup_epochs, total_epochs, min_lr=1
 def main(args):
     # --- Basic Setup ---
     if args.checkpoint_dir is None:
-        args.checkpoint_dir = os.path.join("models", args.model, "checkpoints")
+        path_safe_model_arg = str(args.model).replace(".", '/')
+        args.checkpoint_dir = os.path.join("models", path_safe_model_arg, "checkpoints")
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     epochs = args.epochs
 
-    model_module = importlib.import_module(f"models.{args.model}.model")
+    import_safe_model_arg = str(args.model).replace("/", '.')
+    model_module = importlib.import_module(f"models.{import_safe_model_arg}.model")
     TransformerModel = model_module.TransformerModel
 
     if torch.backends.mps.is_available():

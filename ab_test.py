@@ -20,6 +20,8 @@ Default checkpoint directories are assumed to be:
 
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
+
+import lpips
 import argparse
 import importlib
 import torch
@@ -51,14 +53,16 @@ def main(args):
     print(f"Running AB test on device: {device}")
 
     # Set up dataset and DataLoader with custom collate.
-    dataset = highres_img_dataset(args.data_dir, {"lr": (720, 1280), "hr": (2160, 3840)})
+    dataset = highres_img_dataset(args.data_dir, {"lr": (720, 1280), "hr": (1080, 1920)})
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False,
                               num_workers=0, collate_fn=custom_collate_fn)
 
     # Dynamically import models.
-    model_module_a = importlib.import_module(f"models.{args.model_a}.model")
+    import_safe_model_a_arg = str(args.model_a).replace("/", '.')
+    model_module_a = importlib.import_module(f"models.{import_safe_model_a_arg}.model")
     TransformerModelA = model_module_a.TransformerModel
-    model_module_b = importlib.import_module(f"models.{args.model_b}.model")
+    import_safe_model_b_arg = str(args.model_b).replace("/", '.')
+    model_module_b = importlib.import_module(f"models.{import_safe_model_b_arg}.model")
     TransformerModelB = model_module_b.TransformerModel
 
     # Set default checkpoint directories if not provided.
@@ -81,10 +85,13 @@ def main(args):
     model_b.eval()
 
     # Define loss criterion.
-    criterion = nn.MSELoss(reduction="mean")
+    criterion = nn.MSELoss(reduction="mean").to(device)
+    p_criterion = lpips.LPIPS(net='vgg').to(device).eval()
 
     total_loss_a = 0.0
+    total_p_loss_a = 0.0
     total_loss_b = 0.0
+    total_p_loss_b = 0.0
     processed_samples = 0
 
     # Option lr / hr resize transforms
@@ -116,14 +123,25 @@ def main(args):
                 # Run inference for both models.
                 output_a = model_a(lr_img, res_out=target_res)
                 output_b = model_b(lr_img, res_out=target_res)
-                # Compute loss.
+                #output_a = model_a(lr_img, upscale_factor=4)
+                #output_b = model_b(lr_img, upscale_factor=4)
+                # Compute losses.
                 loss_a = criterion(output_a, hr_img)
+                p_loss_a = p_criterion(output_a, hr_img)
                 loss_b = criterion(output_b, hr_img)
+                p_loss_b = p_criterion(output_b, hr_img)
+
                 total_loss_a += loss_a.item()
+                total_p_loss_a += p_loss_a.item()
                 total_loss_b += loss_b.item()
+                total_p_loss_b += p_loss_b.item()
+
                 processed_samples += 1
             if (batch_idx + 1) % args.log_interval == 0:
                 print(f"Processed {processed_samples} samples so far...")
+
+            if args.max_samples is not None and processed_samples >= args.max_samples:
+                break
 
     if processed_samples == 0:
         print("No samples matched the specified resolution criteria.")
@@ -131,10 +149,12 @@ def main(args):
 
     avg_loss_a = total_loss_a / processed_samples
     avg_loss_b = total_loss_b / processed_samples
+    avg_p_loss_a = total_p_loss_a / processed_samples
+    avg_p_loss_b = total_p_loss_b / processed_samples
 
     print("========================================")
-    print(f"Model A ({args.model_a}) Total Loss: {total_loss_a:.6f} | Average Loss: {avg_loss_a:.6f}")
-    print(f"Model B ({args.model_b}) Total Loss: {total_loss_b:.6f} | Average Loss: {avg_loss_b:.6f}")
+    print(f"Model A ({args.model_a}) Average Perceptive Loss: {avg_p_loss_a:.6f} | Average L1 Loss: {avg_loss_a:.6f}")
+    print(f"Model B ({args.model_b}) Average Perceptive Loss: {avg_p_loss_b:.6f} | Average L1 Loss: {avg_loss_b:.6f}")
     print("========================================")
 
 if __name__ == "__main__":
@@ -157,5 +177,7 @@ if __name__ == "__main__":
                         help="Restrict testing to only LR images with this vertical resolution (e.g., 720)")
     parser.add_argument("--res_out", type=int, default=None,
                         help="Restrict testing to only HR images with this vertical resolution (e.g., 1080)")
+    parser.add_argument("--max_samples", type=int, default=30,
+                        help="Restrict testing to a max number of sample images.")
     args = parser.parse_args()
     main(args)
