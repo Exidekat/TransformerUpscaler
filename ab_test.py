@@ -51,7 +51,7 @@ def main(args):
     print(f"Running AB test on device: {device}")
 
     # Set up dataset and DataLoader with custom collate.
-    dataset = highres_img_dataset(args.data_dir)
+    dataset = highres_img_dataset(args.data_dir, {"lr": (720, 1280), "hr": (2160, 3840)})
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False,
                               num_workers=0, collate_fn=custom_collate_fn)
 
@@ -73,11 +73,11 @@ def main(args):
 
     # Instantiate models and load weights.
     model_a = TransformerModelA().to(device)
-    model_a.load_state_dict(torch.load(ckpt_a, map_location=device))
+    model_a.load_state_dict(torch.load(ckpt_a, map_location=device)['model_state_dict'])
     model_a.eval()
 
     model_b = TransformerModelB().to(device)
-    model_b.load_state_dict(torch.load(ckpt_b, map_location=device))
+    model_b.load_state_dict(torch.load(ckpt_b, map_location=device)['model_state_dict'])
     model_b.eval()
 
     # Define loss criterion.
@@ -139,7 +139,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AB Test for Transformer Upscaler Models")
-    parser.add_argument("--data_dir", type=str, default="images/training_set",
+    parser.add_argument("--data_dir", type=str, default="training_set",
                         help="Directory containing images (.jpg)")
     parser.add_argument("--batch_size", type=int, default=1,
                         help="Batch size (number of samples per iteration)")
