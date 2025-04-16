@@ -72,6 +72,13 @@ def main(args):
     else:
         amp_autocast = nullcontext
 
+    # -- Anomaly Debugging
+    DEBUG = False
+    if DEBUG:
+        torch_anomaly_tracking = torch.autograd.detect_anomaly
+    else:
+        torch_anomaly_tracking = nullcontext
+
     # --- Dataset and DataLoader Setup ---
     # Define all the scale pairs you want to train on
     scale_pairs = [
@@ -169,7 +176,7 @@ def main(args):
         # Interleave batches from different scale factors (using cycled iterators)
         print(f"\n--- Starting Epoch {epoch + 1}/{epochs} ---")
         # Trace NaN anomalies
-        with torch.autograd.detect_anomaly():
+        with torch_anomaly_tracking():
             for step in range(steps_per_epoch):
                 # Choose which scale factor to train on this step
                 # Simple round-robin:
