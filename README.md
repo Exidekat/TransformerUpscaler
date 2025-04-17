@@ -63,3 +63,22 @@ These examples highlight the model's ability to **preserve fine details** and **
 - **Residual Learning for Detail Enhancement**  
   - Uses a **residual connection** to allow the model to focus on learning high frequency details
 
+## Image Description Tool
+
+We provide a command-line utility `tools/describe_image.py` that generates a concise natural-language caption for an image, using a pre-trained BLIP model from Hugging Face.
+
+Dependencies:
+
+    pip install transformers  # if not already installed
+
+Usage:
+
+    python tools/describe_image.py path/to/image.jpg
+
+Example:
+
+    $ python tools/describe_image.py input.jpg
+    A modern building facade with rows of windows against a clear sky.
+
+This textual summary can be included as context for an LLM to answer visual questions about the image.
+

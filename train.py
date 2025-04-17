@@ -8,6 +8,7 @@ the module path models/{args.model}/model.py) and automatically sets the checkpo
 models/{args.model}/checkpoints/ if not provided.
 """
 import os
+
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = '1'
 
 import numpy as np
@@ -20,6 +21,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler
 from torchvision.transforms import transforms
+from pytorch_msssim import SSIM
 import importlib
 import warnings
 from contextlib import nullcontext  # Used as a no-op context manager
@@ -124,11 +126,14 @@ def main(args):
     model = TransformerModel().to(device)
     criterion_l1 = nn.L1Loss().to(device)
     lpips_loss = lpips.LPIPS(net='vgg').to(device).eval()
-    
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scaler = GradScaler(enabled=(device.type == 'cuda')) # Only enable for CUDA
-    epochs_trained = 0
-    warmup_epochs = 3 # Define warmup epochs
+    ssim_criterion = SSIM(data_range=1, size_average=True, channel=3, nonnegative_ssim=True).to(device).eval()
+
+    # Learnable log variances for each loss component
+    log_vars = torch.nn.Parameter(torch.zeros(3, requires_grad=True, device=device))
+
+    optimizer = optim.AdamW(list(model.parameters()) + [log_vars], lr=args.lr, weight_decay=1e-4)
+    scaler = GradScaler(enabled=(device.type == 'cuda'))  # Only enable for CUDA
+    warmup_epochs = 3  # Define warmup epochs
     # Adjust total_epochs for scheduler if you define epoch differently
     scheduler = get_warmup_cosine_scheduler(optimizer, warmup_epochs=warmup_epochs, total_epochs=args.epochs)
 
@@ -170,7 +175,8 @@ def main(args):
     for epoch in range(epochs_trained, epochs):
         running_loss = 0.0
         running_l1_loss = 0.0
-        running_perceptual_loss = 0.0   
+        running_perceptual_loss = 0.0
+        running_ssim_loss = 0.0
         num_batches_processed_this_epoch = 0
 
 
@@ -214,9 +220,6 @@ def main(args):
                         # This indicates an issue in the model's Upsampler or forward logic
                         output_batch = transforms.functional.resize(output_batch, (target_h, target_w), antialias=True) # Use functional resize
 
-                    #  loss = criterion(output_batch, hr_batch)
-
-                    l1_loss = criterion_l1(output_batch, hr_batch)
                     for name, param in model.named_parameters():
                         if param.grad is not None and torch.isnan(param.grad).any():
                             print(f"NaN detected in gradients of {name}")
@@ -226,12 +229,28 @@ def main(args):
                     if torch.isnan(hr_batch).any():
                         print("NaN detected in ground truth images!")
 
+                    l1_loss = criterion_l1(output_batch, hr_batch)
+                    ssim_loss = 1 - ssim_criterion(output_batch, hr_batch)
                     with torch.no_grad():
                         output_lpips = output_batch * 2.0 - 1.0  # Rescale to [-1, 1]
                         target_lpips = hr_batch * 2.0 - 1.0   # Rescale to [-1, 1]
                         perceptual_loss = lpips_loss(output_lpips, target_lpips).mean()
 
-                    loss = l1_loss + args.lpips_weight * perceptual_loss
+                    # Linear Loss
+                    #loss = l1_loss + args.lpips_weight * perceptual_loss + args.ssim_weight * ssim_loss
+
+                    # Uncertainty-weighted individual components
+                    loss_l1 = (1 / (2 * torch.exp(log_vars[0]))) * l1_loss + 0.5 * log_vars[0]
+                    loss_lpips = (1 / (2 * torch.exp(log_vars[1]))) * perceptual_loss + 0.5 * log_vars[1]
+                    loss_ssim = (1 / (2 * torch.exp(log_vars[2]))) * ssim_loss + 0.5 * log_vars[2]
+
+                    # Harmonic mean loss over the uncertainty-weighted losses
+                    epsilon = 1e-6  # to avoid division by zero
+                    loss = 3 / (
+                            (1 / (loss_l1 + epsilon)) +
+                            (1 / (loss_lpips + epsilon)) +
+                            (1 / (loss_ssim + epsilon))
+                    )
 
                 # Scale, Backward, Step
                 scaler.scale(loss).backward()
@@ -248,13 +267,16 @@ def main(args):
                 perceptual_loss_value = perceptual_loss.item()
                 running_perceptual_loss += perceptual_loss_value
 
+                ssim_loss_value = ssim_loss.item()
+                running_ssim_loss += ssim_loss_value
+
                 global_step += 1
                 num_batches_processed_this_epoch += 1
 
                 if step % args.log_interval == 0:
                      print(
                         f"Epoch [{epoch + 1}/{args.epochs}] Step [{step + 1}/{steps_per_epoch}] Factor [x{current_factor}]\n\
-                        \tLoss: {current_loss:.6f}, L1 Loss: {l1_loss_value:.6f}, Perceptual Loss: {perceptual_loss_value:.6f}, LR: {optimizer.param_groups[0]['lr']:.6e}"
+                        \tLoss: {current_loss:.6f}, L1 Loss: {l1_loss_value:.6f}, Perceptual Loss: {perceptual_loss_value:.6f}, SSIM Loss: {ssim_loss_value:.6f}, LR: {optimizer.param_groups[0]['lr']:.6e}"
                      )
 
         # -- End of Epoch --
@@ -264,7 +286,8 @@ def main(args):
         avg_loss = running_loss / num_batches_processed_this_epoch if num_batches_processed_this_epoch > 0 else 0.0
         avg_l1_loss = running_l1_loss / num_batches_processed_this_epoch if num_batches_processed_this_epoch > 0 else 0.0
         avg_perceptual_loss = running_perceptual_loss / num_batches_processed_this_epoch if num_batches_processed_this_epoch > 0 else 0.0
-        print(f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.6f}, L1 Loss: {avg_l1_loss:.6f}, Perceptual Loss: {avg_perceptual_loss:.6f}")
+        avg_ssim_loss = running_ssim_loss / num_batches_processed_this_epoch if num_batches_processed_this_epoch > 0 else 0.0
+        print(f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.6f}, L1 Loss: {avg_l1_loss:.6f}, Perceptual Loss: {avg_perceptual_loss:.6f}, SSIM Loss: {avg_ssim_loss:.6f}")
 
         # Save checkpoint periodically
         if (epoch + 1) % args.checkpoint_interval == 0:
@@ -309,6 +332,8 @@ if __name__ == "__main__":
                         help="Number of DataLoader workers")
     parser.add_argument("--lpips_weight", type=float, default=0.4,
                         help="Weight for LPIPS loss")
+    parser.add_argument("--ssim_weight", type=float, default=0.4,
+                        help="Weight for SSIM loss")
 
     args = parser.parse_args()
 

@@ -144,7 +144,7 @@ def main(args):
     # Build filename components
     scale_str = f"scale{args.scale}"
     # Sanitize data_dir for filename (replace slashes)
-    datadir_str = args.data_dir.rstrip('/').replace('/', '_')
+    datadir_str = f"{args.data_dir.rstrip('/').replace('/', '_')}"
     flags = ""
     if args.compile:
         flags += "_compile"
@@ -153,7 +153,7 @@ def main(args):
     # Determine model directory (e.g., models/Fastv2)
     model_dir = os.path.join("models", args.model)
     os.makedirs(model_dir, exist_ok=True)
-    score_filename = f"score_{date_str}_scale{scale_str}_datadir{datadir_str}{flags}.txt"
+    score_filename = f"score_{date_str}_{scale_str}_{datadir_str}{flags}.txt"
     score_path = os.path.join(model_dir, score_filename)
     try:
         with open(score_path, 'w') as f:
@@ -176,7 +176,7 @@ if __name__ == '__main__':
                         help='Checkpoint directory for model')
     parser.add_argument('--scale', type=int, required=True,
                         help='Upscale factor (e.g., 2, 3, 4, 6)')
-    parser.add_argument('--max_images', type=int, default=None,
+    parser.add_argument('--max_images', type=int, default=100,
                         help='Maximum number of images to evaluate')
     parser.add_argument('--log_interval', type=int, default=10,
                         help='Log progress every N images')
