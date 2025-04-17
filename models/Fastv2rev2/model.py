@@ -129,8 +129,9 @@ def overlap_window_reverse(windows: torch.Tensor, output_size: Tuple[int, int], 
         torch.Tensor: Reconstructed tensor of shape (B, H, W, C) where overlapping regions are averaged.
     """
     B, C, H_pad, W_pad, effective_win, stride = info
-    num_h = H_pad // stride
-    num_w = W_pad // stride
+    # number of overlapping windows along height/width: based on unfold parameters
+    num_h = (H_pad - effective_win) // stride + 1
+    num_w = (W_pad - effective_win) // stride + 1
 
     # Reshape windows to (B, C, num_h, num_w, effective_win, effective_win)
     windows = windows.permute(0, 3, 1, 2).contiguous()  # (B, C, num_windows, effective_area)
