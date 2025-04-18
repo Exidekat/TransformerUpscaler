@@ -58,7 +58,7 @@ def main():
     coords = pick_coordinates(cv2_hr, num_points=1)
     print(coords) 
     w = int(coords[0][0])
-    h = int(coords[0][1])
+    h = int(coords[0][1]) 
     print(f"Selected coordinates: ({w}, {h})")
     
     draw_img = pil_to_cv2(img_hr)

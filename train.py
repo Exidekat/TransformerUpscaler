@@ -21,7 +21,7 @@ from torchvision.transforms import transforms
 import importlib
 import warnings
 from contextlib import nullcontext  # Used as a no-op context manager
-from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
+
 import itertools
 import lpips
 
@@ -30,13 +30,6 @@ from data_handling.data_class import highres_img_dataset_online, highres_img_dat
 from tools.utils import get_latest_checkpoint
 
 warnings.filterwarnings("ignore", category=FutureWarning)
-
-
-def get_warmup_cosine_scheduler(optimizer, warmup_epochs, total_epochs, min_lr=1e-5):
-    # ... (scheduler function remains the same) ...
-    warmup_scheduler = LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_epochs)
-    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=(total_epochs - warmup_epochs), eta_min=min_lr)
-    return SequentialLR(optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
 
 
 def main(args):
@@ -112,14 +105,19 @@ def main(args):
     # --- Model, Optimizer, Scaler, Scheduler ---
     model = TransformerModel().to(device)
     criterion_l1 = nn.L1Loss().to(device)
-    lpips_loss = lpips.LPIPS(net='vgg').to(device).eval()
     
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    if args.use_perceptual:
+        lpips_loss = lpips.LPIPS(net='vgg').to(device).eval()
+    else:
+        lpips_loss = None
+    
+    initial_lr = args.lr if (args.lr is not None) else 2e-4
+    optimizer = optim.AdamW(model.parameters(), lr=initial_lr, weight_decay=1e-4)
+    
     scaler = GradScaler(enabled=(device.type == 'cuda')) # Only enable for CUDA
     epochs_trained = 0
-    warmup_epochs = 3 # Define warmup epochs
     # Adjust total_epochs for scheduler if you define epoch differently
-    scheduler = get_warmup_cosine_scheduler(optimizer, warmup_epochs=warmup_epochs, total_epochs=args.epochs)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=250, gamma=0.5)
 
     # --- Checkpoint Loading ---
     try:
@@ -136,6 +134,13 @@ def main(args):
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             scaler.load_state_dict(checkpoint['scaler_state_dict'])  # Restore GradScaler state
+            
+            
+            if args.lr is not None:
+                for pg in optimizer.param_groups:
+                    pg['lr'] = args.lr
+                print(f"Overrode checkpoint LR; now using lr={args.lr:.2e}")
+            
             epochs_trained = checkpoint['epoch']
             print(f'Successfully resumed from epoch {epochs_trained}')
         except Exception as e:
@@ -145,8 +150,6 @@ def main(args):
         print(f'No checkpoint found. Starting training from scratch.')
         epochs_trained = 0
 
-    # --- Utility for resizing (if needed, but aim to avoid) ---
-    # resize_transforms = {} # Removed, model should handle scale factor
 
     if device.type == 'cuda':
         torch.cuda.empty_cache()
@@ -202,13 +205,16 @@ def main(args):
                 #  loss = criterion(output_batch, hr_batch)
                 
                  l1_loss = criterion_l1(output_batch, hr_batch)
-                
-                 with torch.no_grad():
-                     output_lpips = output_batch * 2.0 - 1.0 # Rescale to [-1, 1]
-                     target_lpips = hr_batch * 2.0 - 1.0   # Rescale to [-1, 1]
-                     perceptual_loss = lpips_loss(output_lpips, target_lpips).mean()
-                     
-                 loss = l1_loss + args.lpips_weight * perceptual_loss
+
+            if args.use_perceptual:
+                with torch.no_grad():
+                    output_lpips = output_batch * 2.0 - 1.0  # Rescale to [-1, 1]
+                    target_lpips = hr_batch * 2.0 - 1.0
+                    perceptual_loss = lpips_loss(output_lpips, target_lpips).mean()
+                loss = l1_loss + args.lpips_weight * perceptual_loss
+            else:
+                perceptual_loss = torch.tensor(0.0)  # For logging consistency
+                loss = l1_loss
 
             # Scale, Backward, Step
             scaler.scale(loss).backward()
@@ -264,11 +270,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the TransformerModel for image upscaling")
     parser.add_argument("--data_dir", type=str, default=None,
                         help="Path to the directory containing training images (.jpg)")
-    parser.add_argument("--batch_size", type=int, default=6,
+    parser.add_argument("--batch_size", type=int, default=32,
                         help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=10,
+    parser.add_argument("--epochs", type=int, default=1000,
                         help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=1e-4,
+    parser.add_argument("--lr", type=float, default=None,
                         help="Learning rate for optimizer")
     parser.add_argument("--log_interval", type=int, default=1,
                         help="Interval (in batches) to log training progress")
@@ -284,6 +290,8 @@ if __name__ == "__main__":
                         help="Number of DataLoader workers")
     parser.add_argument("--lpips_weight", type=float, default=0.4,
                         help="Weight for LPIPS loss")
+    parser.add_argument("--use_perceptual", action="store_true",
+                    help="Include LPIPS perceptual loss using VGG backbone")
 
     args = parser.parse_args()
 
