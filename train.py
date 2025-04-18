@@ -40,7 +40,8 @@ def main(args):
 
     epochs = args.epochs
 
-    model_module = importlib.import_module(f"models.{args.model}.model")
+    import_safe_model_arg = str(args.model).replace("/", '.')
+    model_module = importlib.import_module(f"models.{import_safe_model_arg}.model")
     TransformerModel = model_module.TransformerModel
 
     if torch.backends.mps.is_available():
@@ -128,13 +129,19 @@ def main(args):
 
     if checkpoint_path and os.path.exists(checkpoint_path):
         try:
-            print(f'Loading checkpoint: {checkpoint_path}')
+            print(f"Loading checkpoint: {checkpoint_path}")
             checkpoint = torch.load(checkpoint_path, map_location=device)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            scaler.load_state_dict(checkpoint['scaler_state_dict'])  # Restore GradScaler state
-            
+            # Support checkpoints saved as {'model_state_dict': ...} or raw state_dict
+            state_dict = checkpoint.get('model_state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
+            model.load_state_dict(state_dict)
+            model.eval()
+
+            try:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                scaler.load_state_dict(checkpoint['scaler_state_dict'])  # Restore GradScaler state
+            except Exception as e:
+                print(f"Couldn't load optimizer/scheduler/scaler dicts: {e}")
             
             if args.lr is not None:
                 for pg in optimizer.param_groups:

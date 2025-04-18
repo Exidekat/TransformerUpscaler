@@ -93,7 +93,8 @@ def main(args):
     lr_tensor = lr_tensor.unsqueeze(0)  # Add batch dimension.
 
     # Instantiate the model.
-    model_module = importlib.import_module(f"models.{args.model}.model")
+    import_safe_model_arg = str(args.model).replace("/", '.')
+    model_module = importlib.import_module(f"models.{import_safe_model_arg}.model")
     TransformerModel = model_module.TransformerModel
     model = TransformerModel().to(device)
 
