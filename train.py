@@ -92,7 +92,7 @@ def main(args):
         # {"lr": (720, 1280), "hr": (2160, 3840)} # Example for non-square  
     ]
 
-    if args.data_dir is None: 
+    if args.data_dir is None:
         raise ValueError("Must provide --data_dir for highres_img_dataset")
         # dataset = highres_img_dataset_online() # Keep if you have an online version
     else:
@@ -104,8 +104,8 @@ def main(args):
             factor: DataLoader(
                 dataset,
                 batch_size=args.batch_size,
-                shuffle=True, # Shuffle within each scale factor dataset
-                num_workers=args.num_workers, # Use arg for num_workers
+                shuffle=True,  # Shuffle within each scale factor dataset
+                num_workers=args.num_workers,  # Use arg for num_workers
                 pin_memory=True,
                 # drop_last=True # Consider if uneven batch sizes cause issues
             )
@@ -115,23 +115,22 @@ def main(args):
         dataloader_iters = {
             factor: itertools.cycle(loader)
             for factor, loader in dataloaders.items()
-        } 
+        }
         # Calculate total steps per epoch roughly - assumes datasets are same size
         # Or just define an epoch by a fixed number of steps
         steps_per_epoch = sum(len(dl) for dl in dataloaders.values())
         print(f"Total estimated steps per epoch: {steps_per_epoch}")
 
-
     # --- Model, Optimizer, Scaler, Scheduler ---
     model = TransformerModel().to(device)
     criterion_l1 = nn.L1Loss().to(device)
-    lpips_loss = lpips.LPIPS(net='vgg').to(device).eval()
+    lpips_criterion = lpips.LPIPS(net='vgg').to(device).eval()
     ssim_criterion = SSIM(data_range=1, size_average=True, channel=3, nonnegative_ssim=True).to(device).eval()
 
     # Learnable log variances for each loss component
     log_vars = torch.nn.Parameter(torch.zeros(3, requires_grad=True, device=device))
 
-    optimizer = optim.AdamW(list(model.parameters()) + [log_vars], lr=args.lr, weight_decay=1e-4)
+    optimizer = optim.AdamW(list(model.parameters()) + [log_vars], lr=args.lr, weight_decay=1e-5)
     scaler = GradScaler(enabled=(device.type == 'cuda'))  # Only enable for CUDA
     warmup_epochs = 3  # Define warmup epochs
     # Adjust total_epochs for scheduler if you define epoch differently
@@ -169,7 +168,7 @@ def main(args):
 
     # --- Training Loop ---
     model.train()
-    global_step = 0 # Track total steps for potential fixed-step epochs
+    global_step = 0  # Track total steps for potential fixed-step epochs
     factors_to_train = list(dataloaders.keys())
 
     for epoch in range(epochs_trained, epochs):
@@ -178,7 +177,6 @@ def main(args):
         running_perceptual_loss = 0.0
         running_ssim_loss = 0.0
         num_batches_processed_this_epoch = 0
-
 
         # Interleave batches from different scale factors (using cycled iterators)
         print(f"\n--- Starting Epoch {epoch + 1}/{epochs} ---")
@@ -195,8 +193,7 @@ def main(args):
                 except StopIteration:
                     # Should not happen with itertools.cycle, but good practice
                     print(f"Warning: Dataloader for factor {current_factor} exhausted unexpectedly.")
-                    continue # Or re-initialize: dataloader_iters[current_factor] = itertools.cycle(dataloaders[current_factor])
-
+                    continue  # Or re-initialize: dataloader_iters[current_factor] = itertools.cycle(dataloaders[current_factor])
 
                 optimizer.zero_grad()
 
@@ -211,14 +208,15 @@ def main(args):
                     # Update model forward pass to accept upscale_factor
                     # The model now needs to know which upsampling path to use
 
-
-                    output_batch = model(lr_batch, upscale_factor=current_factor, require_ratio=False) # Pass factor
+                    output_batch = model(lr_batch, upscale_factor=current_factor, require_ratio=False)  # Pass factor
 
                     # Optional: Check if output size matches target (should if model handles factor correctly)
                     if (output_batch.shape[2], output_batch.shape[3]) != (target_h, target_w):
-                        print(f"Warning: Output size {output_batch.shape[2:]} != target size {(target_h, target_w)} for factor {current_factor}. Resizing.")
+                        print(
+                            f"Warning: Output size {output_batch.shape[2:]} != target size {(target_h, target_w)} for factor {current_factor}. Resizing.")
                         # This indicates an issue in the model's Upsampler or forward logic
-                        output_batch = transforms.functional.resize(output_batch, (target_h, target_w), antialias=True) # Use functional resize
+                        output_batch = transforms.functional.resize(output_batch, (target_h, target_w),
+                                                                    antialias=True)  # Use functional resize
 
                     for name, param in model.named_parameters():
                         if param.grad is not None and torch.isnan(param.grad).any():
@@ -233,27 +231,28 @@ def main(args):
                     ssim_loss = 1 - ssim_criterion(output_batch, hr_batch)
                     with torch.no_grad():
                         output_lpips = output_batch * 2.0 - 1.0  # Rescale to [-1, 1]
-                        target_lpips = hr_batch * 2.0 - 1.0   # Rescale to [-1, 1]
-                        perceptual_loss = lpips_loss(output_lpips, target_lpips).mean()
+                        target_lpips = hr_batch * 2.0 - 1.0  # Rescale to [-1, 1]
+                        perceptual_loss = lpips_criterion(output_lpips, target_lpips).mean()
 
                     # Linear Loss
-                    #loss = l1_loss + args.lpips_weight * perceptual_loss + args.ssim_weight * ssim_loss
+                    loss = l1_loss + args.lpips_weight * perceptual_loss + args.ssim_weight * ssim_loss
 
                     # Uncertainty-weighted individual components
-                    loss_l1 = (1 / (2 * torch.exp(log_vars[0]))) * l1_loss + 0.5 * log_vars[0]
-                    loss_lpips = (1 / (2 * torch.exp(log_vars[1]))) * perceptual_loss + 0.5 * log_vars[1]
-                    loss_ssim = (1 / (2 * torch.exp(log_vars[2]))) * ssim_loss + 0.5 * log_vars[2]
+                    #loss_l1 = l1_loss#(1 / (2 * torch.exp(log_vars[0]))) * l1_loss + 0.5 * log_vars[0]
+                    #loss_lpips = perceptual_loss#(1 / (2 * torch.exp(log_vars[1]))) * perceptual_loss + 0.5 * log_vars[1]
+                    #loss_ssim = ssim_loss#(1 / (2 * torch.exp(log_vars[2]))) * ssim_loss + 0.5 * log_vars[2]
 
                     # Harmonic mean loss over the uncertainty-weighted losses
-                    epsilon = 1e-6  # to avoid division by zero
-                    loss = 3 / (
-                            (1 / (loss_l1 + epsilon)) +
-                            (1 / (loss_lpips + epsilon)) +
-                            (1 / (loss_ssim + epsilon))
-                    )
+                    #epsilon = 1e-6  # to avoid division by zero
+                    #loss = 3 / (
+                    #        (1 / (loss_l1 + epsilon)) +
+                    #        (1 / (loss_lpips + epsilon)) +
+                    #        (1 / (loss_ssim + epsilon))
+                    #)
 
                 # Scale, Backward, Step
                 scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
@@ -276,7 +275,8 @@ def main(args):
                 if step % args.log_interval == 0:
                      print(
                         f"Epoch [{epoch + 1}/{args.epochs}] Step [{step + 1}/{steps_per_epoch}] Factor [x{current_factor}]\n\
-                        \tLoss: {current_loss:.6f}, L1 Loss: {l1_loss_value:.6f}, Perceptual Loss: {perceptual_loss_value:.6f}, SSIM Loss: {ssim_loss_value:.6f}, LR: {optimizer.param_groups[0]['lr']:.6e}"
+                        \tLoss: {current_loss:.6f}, L1 Loss: {l1_loss_value:.6f}, Perceptual Loss: {perceptual_loss_value:.6f}, SSIM Loss: {ssim_loss_value:.6f}, LR: {optimizer.param_groups[0]['lr']:.6e}\n\
+                        \tLogVars: {[f'{lv.item():.4f}' for lv in log_vars]}, LR: {optimizer.param_groups[0]['lr']: .6e}"
                      )
 
         # -- End of Epoch --
@@ -287,7 +287,8 @@ def main(args):
         avg_l1_loss = running_l1_loss / num_batches_processed_this_epoch if num_batches_processed_this_epoch > 0 else 0.0
         avg_perceptual_loss = running_perceptual_loss / num_batches_processed_this_epoch if num_batches_processed_this_epoch > 0 else 0.0
         avg_ssim_loss = running_ssim_loss / num_batches_processed_this_epoch if num_batches_processed_this_epoch > 0 else 0.0
-        print(f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.6f}, L1 Loss: {avg_l1_loss:.6f}, Perceptual Loss: {avg_perceptual_loss:.6f}, SSIM Loss: {avg_ssim_loss:.6f}")
+        print(
+            f"Epoch [{epoch + 1}/{args.epochs}] completed. Average Loss: {avg_loss:.6f}, L1 Loss: {avg_l1_loss:.6f}, Perceptual Loss: {avg_perceptual_loss:.6f}, SSIM Loss: {avg_ssim_loss:.6f}")
 
         # Save checkpoint periodically
         if (epoch + 1) % args.checkpoint_interval == 0:
@@ -296,13 +297,12 @@ def main(args):
                 "epoch": epoch + 1,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(), # SAVE scheduler state
+                "scheduler_state_dict": scheduler.state_dict(),  # SAVE scheduler state
                 "scaler_state_dict": scaler.state_dict()
             }
             checkpoint_path = os.path.join(args.checkpoint_dir, f"model_epoch_{epoch + 1}.pth")
             torch.save(checkpoint, checkpoint_path)
             print(f"Saved checkpoint: {checkpoint_path}")
-
 
     print("Training complete!")
     return asyncio.sleep(1)
@@ -316,9 +316,9 @@ if __name__ == "__main__":
                         help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=10,
                         help="Number of training epochs")
-    parser.add_argument("--lr", type=float, default=1e-4,
+    parser.add_argument("--lr", type=float, default=2e-4,
                         help="Learning rate for optimizer")
-    parser.add_argument("--log_interval", type=int, default=1,
+    parser.add_argument("--log_interval", type=int, default=1000,
                         help="Interval (in batches) to log training progress")
     parser.add_argument("--checkpoint_interval", type=int, default=1,
                         help="Save model checkpoint every n epochs")
@@ -330,9 +330,9 @@ if __name__ == "__main__":
                         help="Enable the Traceback Window")
     parser.add_argument("--num_workers", type=int, default=1,
                         help="Number of DataLoader workers")
-    parser.add_argument("--lpips_weight", type=float, default=0.4,
+    parser.add_argument("--lpips_weight", type=float, default=0.01,
                         help="Weight for LPIPS loss")
-    parser.add_argument("--ssim_weight", type=float, default=0.4,
+    parser.add_argument("--ssim_weight", type=float, default=0.01,
                         help="Weight for SSIM loss")
 
     args = parser.parse_args()
@@ -346,5 +346,5 @@ if __name__ == "__main__":
             asyncio.run(main(args))
     else:
         def run():
-            asyncio.run(main(args)) 
+            asyncio.run(main(args))
     run()

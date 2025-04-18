@@ -12,9 +12,11 @@ __pycache__*
 # training images
 # images/training_set/*.png
 
+
 *.png
 !images/image_100.png   
 !images/u100_4hr.png
 !images/u100_12hr.png
 !images/u100_92hr.png
-/training_set - Copy-20250414T020048Z-001.zip
+/training_set
+/Urban100x4
