@@ -622,8 +622,11 @@ class TransformerModel(nn.Module):
         out_feats = out_feats + feat_residual
         # out_feats = out_feats[:, :, :H, :W]
 
-        # 8) Upscale to target
-        out = self.upsampler(out_feats, scale=upscale_factor)  # (B, base_channels, H*, W*)
+        # 8) Upscale to target (only if upscaling factor > 1)
+        if upscale_factor is not None and upscale_factor > 1:
+            out = self.upsampler(out_feats, scale=upscale_factor)  # (B, base_channels, H*, W*)
+        else:
+            out = out_feats
 
         # 9) Convert to RGB
         out = self.to_rgb(out)  # (B, 3, H*, W*)

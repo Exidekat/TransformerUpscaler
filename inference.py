@@ -34,6 +34,15 @@ import time
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 def main(args):
+    # Device selection.
+    if torch.backends.mps.is_built():
+        device = torch.device("mps")
+    elif torch.backends.cuda.is_built():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    print(f"Running inference on device: {device}")
+
     # Validate scale factor.
     if args.scale not in [2, 3, 4, 6]:
         print(f"Scale factor {args.scale} not supported.")
@@ -86,15 +95,17 @@ def main(args):
     # Instantiate the model.
     model_module = importlib.import_module(f"models.{args.model}.model")
     TransformerModel = model_module.TransformerModel
-    model = TransformerModel().to(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    model = TransformerModel().to(device)
 
     # Load checkpoint.
     if args.checkpoint_dir is None:
         args.checkpoint_dir = f"models/{args.model}/checkpoints"
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
     print(f'Loading checkpoint: {checkpoint_path}')
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    model.load_state_dict(checkpoint['model_state_dict'])
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # Support checkpoints saved as {'model_state_dict': ...} or raw state_dict
+    state_dict = checkpoint.get('model_state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    model.load_state_dict(state_dict)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     model.eval()
 

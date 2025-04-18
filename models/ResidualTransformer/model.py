@@ -136,8 +136,9 @@ class TransformerModel(nn.Module):
         B, C, H, W = tokens.shape
         tokens = tokens.flatten(2).transpose(1, 2)  # (B, num_tokens, transformer_dim)
 
-        # Add positional embeddings.
-        tokens = tokens + self.pos_embed
+        # Add positional embeddings if token count matches learned embeddings, else skip for dynamic sizes
+        if tokens.shape[1] == self.pos_embed.shape[1]:
+            tokens = tokens + self.pos_embed
 
         # Process tokens through a series of transformer blocks.
         for block in self.transformer_blocks:

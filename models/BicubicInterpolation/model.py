@@ -14,17 +14,25 @@ class TransformerModel(nn.Module):
     def __init__(self):
         super(TransformerModel, self).__init__()
 
-    def forward(self, x: torch.Tensor, res_out: Tuple[int, int] = (1080, 1920)) -> torch.Tensor:
+    def forward(self,
+                x: torch.Tensor,
+                res_out: Tuple[int, int] = (1080, 1920),
+                upscale_factor: int = None) -> torch.Tensor:
         """
         Forward pass.
 
         Args:
             x (torch.Tensor): Input tensor of shape (B, 3, H, W).
             res_out (Tuple[int, int]): Target output resolution (height, width).
+            upscale_factor (int, optional): If provided, overrides res_out by scaling input spatial dims.
 
         Returns:
             torch.Tensor: Upscaled image of shape (B, 3, target_H, target_W).
         """
+        # Override target resolution if upscale_factor is given
+        if upscale_factor is not None:
+            _, _, h, w = x.shape
+            res_out = (h * upscale_factor, w * upscale_factor)
         # Just provide an upscale interpolation
         upscaled_input = F.interpolate(x, size=res_out, mode='bicubic', align_corners=False)
 

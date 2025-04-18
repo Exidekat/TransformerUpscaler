@@ -40,7 +40,9 @@ def main(args):
     ckpt_path, _ = get_latest_checkpoint(ckpt_dir)
     print(f"Loading checkpoint: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
-    model.load_state_dict(checkpoint.get('model_state_dict', checkpoint))
+    # Support checkpoints saved as {'model_state_dict': ...} or raw state_dict
+    state_dict = checkpoint.get('model_state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    model.load_state_dict(state_dict)
     model.eval()
     # Optional compilation
     if args.compile:
