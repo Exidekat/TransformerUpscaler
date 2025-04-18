@@ -9,10 +9,9 @@ __pycache__*
 # Produced images (default locations)
 *.jpg
 
+
 # training images
 # images/training_set/*.png
-
-
 *.png
 !images/image_100.png   
 !images/u100_4hr.png
@@ -20,3 +19,4 @@ __pycache__*
 !images/u100_92hr.png
 /training_set
 /Urban100x4
+
