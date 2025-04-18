@@ -258,7 +258,8 @@ def main(args):
         device = torch.device("cpu")
     print(f"Using device: {device}")
 
-    model_module = importlib.import_module(f"models.{args.model}.model")
+    import_safe_model_arg = str(args.model).replace("/", '.')
+    model_module = importlib.import_module(f"models.{import_safe_model_arg}.model")
     TransformerModel = model_module.TransformerModel
 
     if args.checkpoint_dir is None:

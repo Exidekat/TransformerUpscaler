@@ -26,7 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from typing import Tuple
-from .utils import Upsampler, default_conv, BasicConv 
+# from .utils import Upsampler, default_conv, BasicConv 
 
 def window_partition(x: torch.Tensor, window_size: int) -> torch.Tensor:
     """
@@ -61,6 +61,101 @@ def window_reverse(windows: torch.Tensor, window_size: int, H: int, W: int) -> t
     x = windows.view(B, H // window_size, W // window_size, window_size, window_size, -1)
     x = x.permute(0, 1, 3, 2, 4, 5).reshape(B, H, W, -1)
     return x
+
+def default_conv(in_channels, out_channels, kernel_size, bias=True, groups=1):
+    wn = lambda x: torch.nn.utils.weight_norm(x)
+    return nn.Conv2d(
+        in_channels, out_channels, kernel_size,
+        padding=(kernel_size // 2), bias=bias, groups=groups)
+
+
+class BasicConv(nn.Module):
+    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=1, dilation=1, groups=1, relu=True,
+                 bn=False, bias=False, up_size=0, fan=False):
+        super(BasicConv, self).__init__()
+        wn = lambda x: torch.nn.utils.weight_norm(x)
+        self.out_channels = out_planes
+        self.in_channels = in_planes
+        if fan:
+            self.conv = nn.ConvTranspose2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride,
+                                           padding=padding,
+                                           dilation=dilation, groups=groups, bias=bias)
+        else:
+            self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding,
+                                  dilation=dilation, groups=groups, bias=bias)
+        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
+        self.relu = nn.ReLU(inplace=True) if relu else None
+        self.up_size = up_size
+        self.up_sample = nn.Upsample(size=(up_size, up_size), mode='bilinear') if up_size != 0 else None
+
+    def forward(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        if self.relu is not None:
+            x = self.relu(x)
+        if self.up_size > 0:
+            x = self.up_sample(x)
+        return x
+
+
+class Upsampler(nn.Module):
+    """
+    Allows multiple (fixed) integer scale factors with sub-pixel convolution.
+    Build once in __init__, then choose the sub-module at forward time.
+    """
+
+    def __init__(self, conv, n_feats, valid_scales=(2, 3, 4, 6),
+                 bn=False, act=False, bias=True):
+        super(Upsampler, self).__init__()
+        self.upsamplers = nn.ModuleDict()
+
+        for scale in valid_scales:
+            # Build a sequence of conv + pixelshuffle blocks for this 'scale'
+            blocks = []
+            if (scale & (scale - 1)) == 0:
+                # scale is a power of two (e.g. 2,4,8,...)
+                steps = int(math.log2(scale))
+                for _ in range(steps):
+                    blocks.append(conv(n_feats, 4 * n_feats, 3, bias))
+                    blocks.append(nn.PixelShuffle(2))
+                    if bn:
+                        blocks.append(nn.BatchNorm2d(n_feats))
+                    if act == 'relu':
+                        blocks.append(nn.ReLU(True))
+                    elif act == 'prelu':
+                        blocks.append(nn.PReLU(n_feats))
+            elif scale == 3:
+                blocks.append(conv(n_feats, 9 * n_feats, 3, bias))
+                blocks.append(nn.PixelShuffle(3))
+                if bn:
+                    blocks.append(nn.BatchNorm2d(n_feats))
+                if act == 'relu':
+                    blocks.append(nn.ReLU(True))
+                elif act == 'prelu':
+                    blocks.append(nn.PReLU(n_feats))
+            elif scale == 6:
+                blocks.append(conv(n_feats, 36 * n_feats, 3, bias))
+                blocks.append(nn.PixelShuffle(6))
+                if bn:
+                    blocks.append(nn.BatchNorm2d(n_feats))
+                if act == 'relu':
+                    blocks.append(nn.ReLU(True))
+                elif act == 'prelu':
+                    blocks.append(nn.PReLU(n_feats))
+            else:
+                raise NotImplementedError(f"Scale={scale} not supported")
+
+            # Register as a sub-module keyed by the integer scale
+            self.upsamplers[str(scale)] = nn.Sequential(*blocks)
+
+    def forward(self, x, scale):
+        # scale should be one of the scales in valid_scales
+        scale_str = str(scale)
+        if scale_str not in self.upsamplers:
+            raise ValueError(f"Requested scale={scale} was not built.")
+        return self.upsamplers[scale_str](x)
+
 
 class WindowAttention(nn.Module):
     """
@@ -132,13 +227,17 @@ class WindowAttention(nn.Module):
         out = self.proj_drop(out)
         return out
 
+
 class WindowTransformerBlock(nn.Module):
     """
-    Transformer block operating on local windows with relative positional encoding.
-    Consists of a window attention layer followed by an MLP with residual connections.
+    A non-shifted window transformer block:
+      - window_size: size of the local window
+      - shift_size=0 (no shift)
     """
-    def __init__(self, dim: int, window_size: int, num_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.1):
-        super(WindowTransformerBlock, self).__init__()
+    def __init__(self, dim, window_size, num_heads, mlp_ratio=4.0, dropout=0.1):
+        super().__init__()
+        self.window_size = window_size
+        self.shift_size = 0
         self.norm1 = nn.LayerNorm(dim)
         self.attn = WindowAttention(dim, window_size, num_heads, dropout)
         self.norm2 = nn.LayerNorm(dim)
@@ -152,23 +251,99 @@ class WindowTransformerBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape (B, N, dim).
-
-        Returns:
-            torch.Tensor: Output tensor of shape (B, N, dim).
+        x: (B, H, W, C)
+        Returns: (B, H, W, C)
         """
-        residual = x
-        x = self.norm1(x)
-        x = self.attn(x)
-        x = residual + x
+        B, H, W, C = x.shape
+        shortcut = x
 
-        residual = x
-        x = self.norm2(x)
-        x = self.mlp(x)
-        x = residual + x
+        # 1. Layer norm
+        x = self.norm1(x.view(B, -1, C)).view(B, H, W, C)
+
+        # 2. No shift here
+        shifted_x = x
+
+        # 3. Window partition
+        windows = window_partition(shifted_x, self.window_size)  
+        B_win, num_windows, N, _ = windows.shape
+        windows = windows.view(B_win * num_windows, N, C)
+
+        # 4. Window attention
+        attn_windows = self.attn(windows)
+        attn_windows = attn_windows.view(B_win, num_windows, N, C)
+
+        # 5. Reverse partition
+        shifted_x = window_reverse(attn_windows, self.window_size, H, W)
+
+        # 6. Residual + MLP
+        x = shortcut + shifted_x
+        x = x + self.mlp(self.norm2(x.view(B, -1, C)).view(B, H, W, C))
+
+        return x
+
+class ShiftedWindowTransformerBlock(nn.Module):
+    """
+    A shifted window transformer block:
+      - window_size: size of the local window
+      - shift_size=window_size//2 for cross-window interaction
+    """
+    def __init__(self, dim, window_size, num_heads, mlp_ratio=4.0, dropout=0.1):
+        super().__init__()
+        self.window_size = window_size
+        self.shift_size = window_size // 2
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = WindowAttention(dim, window_size, num_heads, dropout)
+        self.norm2 = nn.LayerNorm(dim)
+        hidden_dim = int(dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, H, W, C)
+        Returns: (B, H, W, C)
+        """
+        B, H, W, C = x.shape
+        shortcut = x
+
+        # 1. Layer norm
+        x = self.norm1(x.view(B, -1, C)).view(B, H, W, C)
+
+        # 2. Shift feature map
+        if self.shift_size > 0:
+            shifted_x = torch.roll(
+                x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2)
+            )
+        else:
+            shifted_x = x
+
+        # 3. Window partition
+        windows = window_partition(shifted_x, self.window_size)
+        B_win, num_windows, N, _ = windows.shape
+        windows = windows.view(B_win * num_windows, N, C)
+
+        # 4. Window attention
+        attn_windows = self.attn(windows)
+        attn_windows = attn_windows.view(B_win, num_windows, N, C)
+
+        # 5. Reverse partition
+        shifted_x = window_reverse(attn_windows, self.window_size, H, W)
+
+        # 6. Reverse shift
+        if self.shift_size > 0:
+            x = torch.roll(
+                shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2)
+            )
+        else:
+            x = shifted_x
+
+        # 7. Residual + MLP
+        x = shortcut + x
+        x = x + self.mlp(self.norm2(x.view(B, -1, C)).view(B, H, W, C))
         return x
 
 class TransformerModel(nn.Module):
@@ -190,10 +365,10 @@ class TransformerModel(nn.Module):
         self,
         in_channels: int = 3,
         base_channels: int = 64,
-        transformer_dim: int = 192,
-        num_window_blocks: int = 6,
-        num_heads: int = 12,
-        mlp_ratio: float = 4.0,
+        transformer_dim: int = 128,
+        num_window_blocks: int = 3, # 1 window and 1 shifted window block per num_window_blocks
+        num_heads: int = 4,
+        mlp_ratio: float = 3.0,
         dropout: float = 0.1,
         window_size: int = 8,
     ):
@@ -216,13 +391,17 @@ class TransformerModel(nn.Module):
 
         # Window transformer blocks.
         self.window_size = window_size
-        self.window_blocks = nn.ModuleList([
-            WindowTransformerBlock(transformer_dim, window_size, num_heads, mlp_ratio, dropout)
-            for _ in range(num_window_blocks)
-        ])
+        blocks = []
+        for i in range(num_window_blocks):
+            blocks.append(WindowTransformerBlock(transformer_dim, window_size, num_heads, mlp_ratio, dropout))
+            blocks.append(ShiftedWindowTransformerBlock(transformer_dim, window_size, num_heads, mlp_ratio, dropout))
+        self.window_blocks = nn.ModuleList(blocks)
 
         # Patch unembedding: converts tokens back to a feature map.
         self.patch_unembed = nn.ConvTranspose2d(transformer_dim, base_channels, kernel_size=8, stride=8)
+        
+        self.sharpen_conv1 = nn.Conv2d(base_channels, base_channels, 3, 1, 1)
+        self.sharpen_conv2 = nn.Conv2d(base_channels, base_channels, 3, 1, 1)
 
         # Decoder: CNN layers to predict the residual image.
         self.decoder_conv1 = nn.Conv2d(base_channels, base_channels, kernel_size=3, stride=1, padding=1)
@@ -279,19 +458,10 @@ class TransformerModel(nn.Module):
             tokens = tokens.permute(0, 2, 3, 1).contiguous()
             H_t, W_t = tokens.shape[1], tokens.shape[2]
 
-        # Partition tokens into windows.
-        tokens_windows = window_partition(tokens, self.window_size)  # (B, num_windows, window_size*window_size, transformer_dim)
-        B_win, num_windows, N, D = tokens_windows.shape
-        tokens_windows = tokens_windows.view(B_win * num_windows, N, D)
-
         # Process windows with transformer blocks.
         for block in self.window_blocks:
-            tokens_windows = block(tokens_windows)
-
-        # Merge windows back to token grid.
-        tokens_windows = tokens_windows.view(B_win, num_windows, N, D)
-        tokens = window_reverse(tokens_windows, self.window_size, H_t, W_t)  # (B, H_t, W_t, transformer_dim)
-
+            tokens = block(tokens)
+            
         # Remove padding added for window partitioning.
         if pad_bottom or pad_right:
             tokens = tokens[:, :orig_H, :orig_W, :]
@@ -302,7 +472,7 @@ class TransformerModel(nn.Module):
         feat_trans = self.patch_unembed(tokens)  # (B, base_channels, H_pad, W_pad)
 
         # Crop feat_trans to remove the padding from before patch embedding.
-        feat_trans = feat_trans[:, :, :H_feat, :W_feat]
+        feat_trans = feat_trans[:, :, :H_feat, :W_feat]   
 
         # Combine skip connection.
         feat = feat[:, :, :H_feat, :W_feat]
@@ -310,6 +480,10 @@ class TransformerModel(nn.Module):
 
         # Decoder.
         dec = self.relu(self.decoder_conv1(combined_feat))
+        dec = self.relu(self.sharpen_conv1(dec))
+        dec = self.relu(self.sharpen_conv2(dec))
+    
+        
         residual = self.decoder_conv2(dec)
 
         # Upsample the predicted residual.
@@ -330,5 +504,6 @@ class TransformerModel(nn.Module):
 if __name__ == "__main__":
     model = TransformerModel()
     dummy_input = torch.randn(1, 3, 100, 100)
-    output = model(dummy_input, 6)
+    output = model(dummy_input, upscale_factor=6)
     print("Output shape:", output.shape)  # Expected: (1, 3, 600, 600)
+    print("Model parameters:", sum(p.numel() for p in model.parameters()))  

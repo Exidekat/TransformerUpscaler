@@ -31,7 +31,8 @@ def main(args):
     print(f"Running speed test on device: {device}")
 
     # Dynamically import the desired model module from models/{args.model}/model.py
-    model_module = importlib.import_module(f"models.{args.model}.model")
+    import_safe_model_arg = str(args.model).replace("/", '.')
+    model_module = importlib.import_module(f"models.{import_safe_model_arg}.model")
     TransformerModel = model_module.TransformerModel
 
     # Set default checkpoint directory if not provided.
@@ -41,8 +42,11 @@ def main(args):
     # Instantiate the model and load the latest checkpoint
     model = TransformerModel().to(device)
     checkpoint_path, _ = get_latest_checkpoint(args.checkpoint_dir)
-    print(f"Loading checkpoint from: {checkpoint_path}")
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    print(f'Loading checkpoint: {checkpoint_path}')
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # Support checkpoints saved as {'model_state_dict': ...} or raw state_dict
+    state_dict = checkpoint.get('model_state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    model.load_state_dict(state_dict)
     model.eval()
 
     # Create the dataset and dataloader (batch_size=1 for single image processing)
@@ -79,7 +83,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Speed test for Transformer upscaler inference")
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Directory containing images for inference")
-    parser.add_argument("--model", type=str, default="StrippedTransformer",
+    parser.add_argument("--model", type=str, default="FastTransformer",
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory containing model checkpoints (default: models/{model}/checkpoints/)")
