@@ -1,0 +1,2 @@
+Average PSNR (Y): 21.658 dB
+Average SSIM (Y): 0.5867

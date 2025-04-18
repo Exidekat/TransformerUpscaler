@@ -77,11 +77,17 @@ def main(args):
 
     # Instantiate models and load weights.
     model_a = TransformerModelA().to(device)
-    model_a.load_state_dict(torch.load(ckpt_a, map_location=device)['model_state_dict'])
+    model_b = TransformerModelB().to(device)
+
+    # Support checkpoints saved as {'model_state_dict': ...} or raw state_dict
+    checkpoint = torch.load(ckpt_a, map_location=device)
+    state_dict = checkpoint.get('model_state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    model_a.load_state_dict(state_dict)
     model_a.eval()
 
-    model_b = TransformerModelB().to(device)
-    model_b.load_state_dict(torch.load(ckpt_b, map_location=device)['model_state_dict'])
+    checkpoint = torch.load(ckpt_b, map_location=device)
+    state_dict = checkpoint.get('model_state_dict', checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    model_b.load_state_dict(state_dict)
     model_b.eval()
 
     # Define loss criterion.
