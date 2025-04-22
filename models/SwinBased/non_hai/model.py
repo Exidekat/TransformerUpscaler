@@ -41,7 +41,8 @@ def window_reverse(windows: torch.Tensor, window_size: int, H: int, W: int) -> t
 class PatchEmbedding(nn.Module):
     def __init__(self, in_channels=3, embed_dim=96, norm_layer=None):
         super().__init__()
-        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=3, stride=1, padding=1)
+        # Reduce spatial resolution by patch size to limit token count
+        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=8, stride=8)
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
     def forward(self, x):
@@ -54,7 +55,8 @@ class PatchEmbedding(nn.Module):
 class PatchUnembedding(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        # Inverse of patch embedding: expand patch tokens back to spatial features
+        self.conv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=8, stride=8)
 
     def forward(self, x):
         B, H, W, C = x.shape
