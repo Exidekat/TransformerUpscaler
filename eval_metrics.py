@@ -32,7 +32,8 @@ def main(args):
     print(f"Using device: {device}")
 
     # Load model
-    model_module = importlib.import_module(f"models.{args.model}.model")
+    import_safe_model_arg = str(args.model).replace("/", '.')
+    model_module = importlib.import_module(f"models.{import_safe_model_arg}.model")
     TransformerModel = getattr(model_module, "TransformerModel")
     model = TransformerModel().to(device)
     # Load latest checkpoint
