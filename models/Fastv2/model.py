@@ -10,7 +10,6 @@ Fixes applied:
 5) Removed direct x + shortcut if channels mismatch.
 """
 
-from email.mime import base
 import math
 import torch
 import torch.nn as nn

@@ -58,11 +58,13 @@ if [[ -z "$DATA_DIR" || -z "$SCALE" ]]; then
   show_help
 fi
 
-# Iterate over all model directories
-for model_path in models/*; do
-  if [[ -d "$model_path" && -f "$model_path/model.py" ]]; then
-    model_name=$(basename "$model_path")
-    echo "\n=== Evaluating model: $model_name ==="
+# Iterate over every directory containing a model.py, at any depth under models/.
+# (A one-level glob silently skipped the models/SwinBased/* variants.)
+while IFS= read -r model_file; do
+    model_path=$(dirname "$model_file")
+    # Name relative to models/, e.g. "Fastv2" or "SwinBased/base_hai"
+    model_name=${model_path#models/}
+    printf '\n=== Evaluating model: %s ===\n' "$model_name"
     # Build eval_metrics.py arguments
     ARGS=(
       --data_dir "$DATA_DIR"
@@ -81,6 +83,6 @@ for model_path in models/*; do
     fi
     # Run evaluation
     python eval_metrics.py "${ARGS[@]}"
-  fi
-done
-echo -e "\nAll models evaluated."
+done < <(find models -mindepth 1 -name model.py -type f | sort)
+
+printf '\nAll models evaluated.\n'

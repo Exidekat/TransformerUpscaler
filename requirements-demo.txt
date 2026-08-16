@@ -1,0 +1,6 @@
+# Extras for the live screen-overlay demo (overlay.py / app_overlay.py).
+# Not required for training, evaluation, or inference.
+mss>=9.0
+PyGetWindow>=0.0.9
+pywin32>=306 ; sys_platform == "win32"
+pyobjc-framework-Quartz ; sys_platform == "darwin"

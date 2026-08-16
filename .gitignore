@@ -8,6 +8,9 @@ __pycache__*
 
 # Produced images (default locations)
 *.jpg
+# ...but demo figures referenced by the README are tracked on purpose
+!models/*/demo/*.jpg
+!models/*/*/demo/*.jpg
 
 
 # training images
@@ -20,3 +23,13 @@ __pycache__*
 /training_set
 /Urban100x4
 
+
+# Benchmark datasets (download separately; see README)
+/data/
+/Urban100*
+/Set5
+/Set14
+/BSD100
+
+# Weights: keep one canonical checkpoint per model, publish the rest on Releases
+*.pth.tmp

@@ -104,7 +104,16 @@ def main(args):
 
 
     # --- Model, Optimizer, Scaler, Scheduler ---
-    model = TransformerModel().to(device)
+    # Pass use_hai only to models whose constructor supports it (the SwinBased family),
+    # so the ablation flag is reachable from the CLI without breaking other architectures.
+    import inspect as _inspect
+    _kw = {}
+    if "use_hai" in _inspect.signature(TransformerModel.__init__).parameters:
+        _kw["use_hai"] = args.use_hai
+    elif not args.use_hai:
+        raise SystemExit(f"--use_hai false is not supported by model '{args.model}' "
+                         f"(no use_hai parameter); it applies to the SwinBased variants.")
+    model = TransformerModel(**_kw).to(device)
     criterion_l1 = nn.L1Loss().to(device)
     
     if args.use_perceptual:
@@ -291,6 +300,10 @@ if __name__ == "__main__":
                         help="Model name to use (corresponds to models/{model}/model.py)")
     parser.add_argument("--checkpoint_dir", type=str, default=None,
                         help="Directory to save model checkpoints (default: models/{model}/checkpoints/)")
+    parser.add_argument("--use_hai", type=lambda v: str(v).lower() not in ("false", "0", "no"),
+                        default=True,
+                        help="Enable HAI gated residual scaling (SwinBased models). "
+                             "Pass 'false' to train the ablation control.")
     parser.add_argument("--traceback", action="store_true",
                         help="Enable the Traceback Window")
     parser.add_argument("--num_workers", type=int, default=1,

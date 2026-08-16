@@ -1,53 +1,18 @@
-attrs==25.3.0
-certifi==2025.1.31
-charset-normalizer==3.4.1
-fastjsonschema==2.21.1
-filelock==3.18.0
-fsspec==2025.3.0
-idna==3.10
-imageio==2.37.0
-Jinja2==3.1.6
-jsonschema==4.23.0
-jsonschema-specifications==2024.10.1
-jupyter_core==5.7.2
-lazy_loader==0.4
-llvmlite==0.44.0
-matplotlib==3.10.1
-MarkupSafe==3.0.2
-mpmath==1.3.0
-mss==10.0.0
-nbformat==5.10.4
-nbstripout==0.8.1
-networkx==3.4.2
-numba==0.61.0
-numpy==1.26.4
-opencv-python==3.4.18.65
-packaging==24.2
-pandas==2.2.3
-pillow==11.1.0
-platformdirs==4.3.6
-PyGetWindow==0.0.9
-PyRect==0.2.0
-python-dateutil==2.9.0.post0
-pytz==2025.1
-referencing==0.36.2
-requests==2.32.3
-rpds-py==0.23.1
-scikit-image==0.25.2
-scipy==1.15.2
-six==1.17.0
-sympy==1.13.1
-tifffile==2025.3.13
-traitlets==5.14.3
-typing_extensions==4.12.2
-tzdata==2025.1
-urllib3==2.3.0
-lpips==0.1.4
-pygetwindow~=0.0.9
-torch==2.5.1+cu121; 'win32' in sys_platform
-torch~=2.6.0
-torchvision==0.20.1+cu121; 'win32' in sys_platform
-torchvision~=0.21.0
-pytorch_msssim==1.0.0
-pywin32==310; 'win32' in sys_platform
-pyobjc-framework-Quartz; 'darwin' in sys_platform
+# Core: model, training, and the evaluation harness
+torch>=2.1
+torchvision>=0.16
+numpy>=1.24
+pillow>=10.0
+scikit-image>=0.22          # PSNR / SSIM in eval_metrics.py
+scipy>=1.11
+lpips>=0.1.4                # optional perceptual loss (train.py --use_perceptual)
+pytorch_msssim>=1.0.0
+
+# Analysis and plotting (lam.py, benchmark.py, ab_test.py)
+matplotlib>=3.8
+pandas>=2.0
+opencv-python>=4.8
+numba>=0.59
+
+# Live screen-overlay demo only (overlay.py, app_overlay.py) -- not needed for
+# training, evaluation, or inference. Install with:  pip install -r requirements-demo.txt

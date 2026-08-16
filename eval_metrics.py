@@ -2,7 +2,23 @@
 """
 eval_metrics.py
 
-Run a super-resolution model over an entire dataset and compute PSNR and SSIM scores on the Y (luminance) channel.
+Run a super-resolution model over a dataset and report PSNR/SSIM on the Y (luminance) channel.
+
+Protocol (the crop/border/SSIM conventions used by EDSR and SwinIR):
+  1. Crop each HR image to a multiple of `scale` BEFORE downsampling, so the model
+     output lands on exactly the HR size and the prediction is never resampled.
+  2. Bicubic-downsample the cropped HR to produce the LR input.
+  3. Crop `scale` pixels from every border before scoring.
+  4. Compute on the Y channel of YCbCr, in fp32, with MATLAB-convention SSIM
+     (gaussian_weights=True, sigma=1.5, use_sample_covariance=False).
+
+Use --fast for fp16 autocast when timing throughput; never for published metrics.
+
+NOTE ON COMPARABILITY: the LR input is produced with PIL's BICUBIC resampler, not
+MATLAB's `imresize` with antialiasing, which is what the SR literature uses. That
+difference shifts the whole scale by roughly a decibel, so numbers from this harness
+are internally comparable to each other -- including the bicubic reference run through
+the same pipeline -- but should not be placed alongside published benchmark tables.
 """
 import os
 import argparse
@@ -85,15 +101,18 @@ def main(args):
         # Load high-resolution image
         hr_img = Image.open(img_path).convert('RGB')
         w, h = hr_img.size
-        # Create low-resolution image by bicubic downsampling
-        lr_size = (w // args.scale, h // args.scale)
-        lr_img = hr_img.resize(lr_size, Image.BICUBIC)
+        # Crop HR to a multiple of the scale factor so SR output matches HR exactly
+        w, h = w - (w % args.scale), h - (h % args.scale)
+        if (w, h) != hr_img.size:
+            hr_img = hr_img.crop((0, 0, w, h))
+        # Create low-resolution input by bicubic downsampling the cropped HR
+        lr_img = hr_img.resize((w // args.scale, h // args.scale), Image.BICUBIC)
 
         # Model inference
         lr_tensor = to_tensor(lr_img).unsqueeze(0).to(device)
         with torch.no_grad():
-            # Mixed precision if supported
-            if device.type in ('cuda', 'mps'):
+            # fp32 by default for published metrics; --fast enables fp16 autocast for timing
+            if args.fast and device.type in ('cuda', 'mps'):
                 with torch.autocast(device_type=device.type, dtype=torch.float16):
                     start = time.time()
                     out = model(lr_tensor, upscale_factor=args.scale)
@@ -104,18 +123,30 @@ def main(args):
                 end = time.time()
         times.append(end - start)
 
-        # Convert model output to PIL image and match original size
-        pred_img = to_pil(out.squeeze(0).cpu().clamp(0, 1))
+        # Convert model output to PIL image. A size mismatch is a bug in the upsampler,
+        # not something to paper over by resampling the prediction.
+        pred_img = to_pil(out.float().squeeze(0).cpu().clamp(0, 1))
         if pred_img.size != hr_img.size:
-            pred_img = pred_img.resize(hr_img.size, Image.BICUBIC)
+            raise RuntimeError(
+                f"{os.path.basename(img_path)}: model returned {pred_img.size}, expected "
+                f"{hr_img.size} at scale {args.scale}. Resampling the prediction would "
+                f"invalidate the metric, so this is a hard error."
+            )
 
         # Convert to Y channel
         hr_y = np.array(hr_img.convert('YCbCr').split()[0], dtype=np.float32) / 255.0
         pred_y = np.array(pred_img.convert('YCbCr').split()[0], dtype=np.float32) / 255.0
 
-        # Compute metrics
+        # Standard protocol: ignore `scale` pixels at each border
+        b = args.scale
+        if b > 0 and hr_y.shape[0] > 2 * b and hr_y.shape[1] > 2 * b:
+            hr_y, pred_y = hr_y[b:-b, b:-b], pred_y[b:-b, b:-b]
+
+        # Compute metrics (MATLAB-convention SSIM, as used in the SR literature)
         p = compare_psnr(hr_y, pred_y, data_range=1.0)
-        s = compare_ssim(hr_y, pred_y, data_range=1.0)
+        s = compare_ssim(hr_y, pred_y, data_range=1.0,
+                         gaussian_weights=True, sigma=1.5,
+                         use_sample_covariance=False)
         psnr_vals.append(p)
         ssim_vals.append(s)
 
@@ -147,7 +178,7 @@ def main(args):
     # Build filename components
     scale_str = f"scale{args.scale}"
     # Sanitize data_dir for filename (replace slashes)
-    datadir_str = f"{args.data_dir.rstrip('/').replace('/', '_')}"
+    datadir_str = os.path.basename(args.data_dir.rstrip('/')) or "dataset"
     flags = ""
     if args.compile:
         flags += "_compile"
@@ -160,6 +191,11 @@ def main(args):
     score_path = os.path.join(model_dir, score_filename)
     try:
         with open(score_path, 'w') as f:
+            f.write(f"Model: {args.model}\n")
+            f.write(f"Dataset: {datadir_str}   Scale: x{args.scale}   Images: {count}\n")
+            f.write(f"Protocol: HR cropped to multiple of scale; bicubic down; "
+                    f"{args.scale}px border crop; Y channel; "
+                    f"{'fp16' if args.fast else 'fp32'}; MATLAB-convention SSIM\n")
             f.write(f"Average PSNR (Y): {avg_psnr:.3f} dB\n")
             f.write(f"Average SSIM (Y): {avg_ssim:.4f}\n")
         print(f"Scores saved to: {score_path}")
@@ -183,6 +219,8 @@ if __name__ == '__main__':
                         help='Maximum number of images to evaluate')
     parser.add_argument('--log_interval', type=int, default=10,
                         help='Log progress every N images')
+    parser.add_argument('--fast', action='store_true',
+                        help='fp16 autocast on CUDA/MPS. For timing runs only, never for published metrics')
     parser.add_argument('--compile', action='store_true',
                         help='Enable torch.compile for model')
     parser.add_argument('--quantize', action='store_true',

@@ -1,0 +1,5 @@
+Model: SwinBased/base_hai
+Dataset: Urban100   Scale: x4   Images: 100
+Protocol: HR cropped to multiple of scale; bicubic down; 4px border crop; Y channel; fp32; MATLAB-convention SSIM
+Average PSNR (Y): 22.536 dB
+Average SSIM (Y): 0.6700

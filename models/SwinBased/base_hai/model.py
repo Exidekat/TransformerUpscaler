@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 
 
-from email.mime import base
 import math
-from turtle import st
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -426,17 +424,36 @@ class HybridAttentionBlock(nn.Module):
         return out
     
 class HAI(nn.Module):
+    """Gated residual scaling around an attention block.
+
+        out = block(x) + alpha * x
+
+    `alpha` is a per-channel learnable scale initialised at zero, so the wrapped block
+    starts as an identity pass-through and is admitted only as far as training warrants.
+    This is what makes the deeper variants trainable at this budget.
+
+    Set `enabled=False` for the ablation control. The wrapped block is then applied
+    unchanged and no `alpha` parameter is created, so a control model differs from a
+    gated one by exactly the `alpha` tensors and nothing else -- every other state-dict
+    key is identical between the two conditions.
+    """
+
     def __init__(self,
                  transformer_block: nn.Module,
                  dim: int,
+                 enabled: bool = True,
                  ):
         super().__init__()
-        
+
         self.block = transformer_block
-        self.alpha = nn.Parameter(torch.zeros(dim))
-        
+        self.enabled = enabled
+        if enabled:
+            self.alpha = nn.Parameter(torch.zeros(dim))
+
     def forward(self, x: torch.Tensor):
         out = self.block(x)
+        if not self.enabled:
+            return out
         alpha = self.alpha.view(1, 1, 1, -1)
         return out + alpha * x
         
@@ -450,7 +467,8 @@ class ResidualHABBlock(nn.Module):
                  dropout: float = 0.1,
                  channel_reduction: int = 16,
                  pool_size: int = 4,
-                 blocks_per_group = 3
+                 blocks_per_group = 3,
+                 use_hai: bool = True,
                  ):
         super().__init__()
 
@@ -469,7 +487,8 @@ class ResidualHABBlock(nn.Module):
                         channel_reduction=channel_reduction,
                         shift_size=shift_size
                     ),
-                    dim=dim
+                    dim=dim,
+                    enabled=use_hai
                 )
             )
             blocks.append(
@@ -481,7 +500,8 @@ class ResidualHABBlock(nn.Module):
                         qkv_bias=True,
                         dropout=dropout
                     ),
-                    dim=dim
+                    dim=dim,
+                    enabled=use_hai
                 )
             )
         self.blocks = nn.Sequential(*blocks)
@@ -528,6 +548,7 @@ class TransformerModel(nn.Module):
         transformer_dim: int = 60,
         num_groups: int = 6,
         blocks_per_group: int = 3,
+        use_hai: bool = True,
         num_heads: int = 2,
         mlp_ratio: float = 2,
         dropout: float = 0.1,
@@ -553,7 +574,8 @@ class TransformerModel(nn.Module):
         self.body = nn.Sequential(
             *[ResidualHABBlock(dim=transformer_dim, window_size=window_size, num_heads=num_heads,
                                mlp_ratio=mlp_ratio, dropout=dropout, channel_reduction=coarse_attention_pool_size,
-                               blocks_per_group=blocks_per_group) for _ in range(num_groups)]
+                               blocks_per_group=blocks_per_group,
+                               use_hai=use_hai) for _ in range(num_groups)]
         )
         self.deep_conv = TransformerConv(transformer_dim, transformer_dim)
 
